@@ -686,7 +686,7 @@ summary(MOD1_BMI_AF_SLOPES)
 
 ```{r}
 library(WeMix)
-library(lme4)     # para nobars()
+library(lme4)     
 library(dplyr)
 library(ggplot2)
 
@@ -858,7 +858,7 @@ p_quad <- ggplot(diag_quad, aes(x = AGE, y = RME)) +
 print(p_quad)
 
 #========================
-# 6) (Opcional) AIC/BIC para complementar la decisión
+# 6) AIC/BIC para complementar la decisión
 #========================
 get_ic_wemix <- function(mod, n){
   k_fix <- length(mod$coef)
@@ -912,7 +912,7 @@ diag_L1_quad <- get_RCE(m1_quad, dat)
 
 #========================
 # 2) Homocedasticidad Nivel 1
-#    (A) Según tu flujograma: RCE vs Edad
+#    (A) RCE vs Edad
 #========================
 p_homo_age <- ggplot(diag_L1_quad, aes(x = AGE, y = RCE)) +
   geom_point(alpha = 0.25) +
@@ -998,7 +998,6 @@ rbee_city <- get_RBEE(MOD1_F1, "CITY_NAME")     # cols: (Intercept), INT_Z, GREE
 
 #========================================================
 # 3) Armar bases nivel 2 para graficar (1 fila por cluster)
-#    Ajusta aquí cuáles son tus covariables L2.
 #========================================================
 L2_vars_buf <- c("INT_Z","GREEN_Z","STOPS_Q4_NUM","STOPS_Q4")  # <- edita si aplica
 
@@ -1036,7 +1035,6 @@ plot_rbee_cat <- function(df, x, rbee, title){
 
 #========================================================
 # 5) Linealidad + homocedasticidad nivel 2 (BUF_ID_CITY)
-#    (en tu flujograma: RBEE vs cada variable L2)
 #========================================================
 
 # Nota: en rbee_buf el RBEE del intercepto suele llamarse "(Intercept)"
@@ -1202,7 +1200,6 @@ get_RBEE <- function(mod, group){
 
 #========================================================
 # 2) Extraer RBEE del intercepto para BUF_ID_CITY en los 3 modelos
-#    (ajusta los objetos a tus nombres reales)
 #    - m_L2_lin
 #    - m_GREEN_quad
 #    - m_GREEN_cubic
@@ -1222,8 +1219,7 @@ rbee_all <- bind_rows(rbee_lin, rbee_quad, rbee_cub) %>%
   left_join(L2_buf, by = "BUF_ID_CITY")
 
 #========================================================
-# 4) Pasar a formato largo SOLO para el intercepto (más limpio)
-#    Nota: en ranefMat el intercepto suele llamarse "(Intercept)"
+# 4) Pasar a formato largo SOLO para el intercepto 
 #========================================================
 rbee_all_long <- rbee_all %>%
   pivot_longer(cols = c("(Intercept)"),
@@ -1262,7 +1258,6 @@ get_RBEE <- function(mod, group){
 #========================================================
 # 2) RBEE(intercepto) vs INT_Z
 #    Modelos: lineal / cuadrático / cúbico para intersecciones
-#    (usa tus objetos ya ajustados)
 #      - m_L2_lin
 #      - m_INT_quad
 #      - m_INT_cubic
@@ -1326,10 +1321,6 @@ m_GREEN_cubic2 <- mix(
 
 #========================================================
 # LRT: ¿interacción no lineal (GREEN^2 y GREEN^3) por EDU_GROUP?
-# Compara:
-#   m_GREEN_cubic1 (solo GREEN_Z * EDU_GROUP)
-# vs
-#   m_GREEN_cubic2 ((GREEN_Z + GREEN_Z2 + GREEN_Z3) * EDU_GROUP)
 #========================================================
 
 LRT_wemix <- function(m0, m1, df){
@@ -1837,7 +1828,7 @@ looo_l1 <- map_dfr(out_map$ID_real, function(id_drop){
 })
 
 #========================
-# 5) Resúmenes útiles
+# 5) Resúmenes 
 #========================
 summary_by_term <- looo_l1 %>%
   group_by(term) %>%
@@ -2063,7 +2054,7 @@ ci_green <- wald_ci(
 )
 
 #----------------------------
-# 5) Construir tabla en formato “como tu imagen”
+# 5) Construir tabla 
 #----------------------------
 tab <- tibble(
   Variable = c(
@@ -2145,7 +2136,7 @@ sd_city <- dat %>%
 
 #----------------------------
 # 4) Componentes para IC Wald del slope ciudad-específico
-#    Var(beta_city) ≈ Var(beta_fix) + Var(u_slope)  (misma aproximación que vienes usando)
+#    Var(beta_city) ≈ Var(beta_fix) + Var(u_slope) 
 #----------------------------
 V <- mod$cov_mat
 G <- mod$varVC[[city_var]]
@@ -2205,7 +2196,7 @@ df_STOPS_1Q <- city_eff %>%
   ) %>%
   dplyr::select(CITY_NAME, expos, contraste, sd_ciudad, est, lwr, upr)
 
-# (Opcional) STOPS: Q4 vs Q1 (Δ=3). Descomenta si lo quieres en la tabla:
+# (Opcional) STOPS: Q4 vs Q1 (Δ=3). 
 # df_STOPS_Q4vQ1 <- city_eff %>%
 #   mutate(
 #     expos = "Distancia a paraderos",
@@ -2234,7 +2225,6 @@ df_GREEN <- city_eff %>%
 #----------------------------
 # 6) Promedio poblacional (u = 0) al final
 #    - Para INT/GREEN: sigue siendo por 1 SD (Z por ciudad) pero sin "sd_ciudad" específica
-#      (si quieres, puedo poner SD global o promedio ponderado de SDs)
 #----------------------------
 pop <- tibble(
   CITY_NAME = "Promedio poblacional",
@@ -2335,7 +2325,7 @@ stops_deltas <- stops_q_city %>%
   )
 
 #--------------------------------------------------
-# 3) Tabla final “publicable”
+# 3) Tabla final 
 #--------------------------------------------------
 pretty_city <- c(
   "BOGOTA" = "Bogotá",
@@ -2708,7 +2698,6 @@ tabla_final
 #============================
 # Forest plot INT_Z por ciudad (1 fila por ciudad, 2 sexos apilados)
 # Orden: BOGOTA, MEDELLIN, CALI, BARRANQUILLA, BUCARAMANGA
-# Promedio poblacional al final + línea punteada en 0
 #============================
 
 library(dplyr)
@@ -2826,7 +2815,7 @@ plot_df <- bind_rows(df_city, pop_h, pop_m) %>%
   )
 
 #----------------------------
-# 7) Plot (publicable, sin ggh4x)
+# 7) Plot
 #----------------------------
 
 # Posición vertical del promedio (centro)
@@ -2914,11 +2903,9 @@ city_var <- "CITY_NAME"
 # 1) Términos del modelo
 #----------------------------
 b_INT <- "INT_Z"
-
-# Define aquí el orden y etiquetas EXACTAS de EDU_GROUP (como están en tus datos/modelo)
 edu_levels <- c("Primaria", "Secundaria o técnico", "Profesional o mayor")
 
-# Interacciones esperadas (depende de tu codificación del factor; normalmente no hay término para la referencia)
+# Interacciones esperadas 
 b_INTxEDU <- c(
   "EDU_GROUPSecundaria o técnico:INT_Z",
   "EDU_GROUPProfesional o mayor:INT_Z"
@@ -3075,7 +3062,7 @@ ggplot(plot_df, aes(x = slope, y = y, color = EDU_GROUP)) +
     expand = expansion(mult = c(0.02, 0.03))
   ) +
 
-  # (opcional) si quieres “negrita simulada” para el promedio, deja label vacío y agrega annotate con texto
+  # (opcional) 
   annotate("text",
            x = x_label, y = y_prom,
            label = "",
@@ -3107,7 +3094,6 @@ ggplot(plot_df, aes(x = slope, y = y, color = EDU_GROUP)) +
 #=========================================================
 # Forest plot: STOPS_Q4_NUM (contrastes vs Q1) por ciudad
 # SIN estratificar; 1 color por ciudad; promedio naranja
-# Estética tipo “paper” (sin ggtext)
 #=========================================================
 
 library(dplyr)
@@ -3475,6 +3461,7 @@ ggplot(plot_df, aes(x = slope, y = y, color = EDU_GROUP)) +
   )
 
 ```
+
 
 
 
