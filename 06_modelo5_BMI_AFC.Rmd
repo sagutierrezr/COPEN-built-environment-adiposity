@@ -886,7 +886,7 @@ df_STOPS <- u_city %>%
 pop_STOPS <- make_pop(b_STOPS, "STOPS_Q4_NUM")
 
 #=========================================================
-# D) DENS_HEALTH_LOG_ZC (interacción con SEX y EDU)  <-- ACTUALIZADO
+# D) DENS_HEALTH_LOG_ZC (interacción con SEX y EDU)  
 #=========================================================
 b_H <- "DENS_HEALTH_LOG_ZC"
 
@@ -1074,7 +1074,7 @@ pred_grid <- pred_grid %>%
   )
 
 #---------------------------------------------------------
-# 5) Paleta Nature / Lancet
+# 5) Paleta
 #---------------------------------------------------------
 city_colors <- c(
   "Bogotá"       = "#0072B2",
@@ -1085,7 +1085,7 @@ city_colors <- c(
 )
 
 #---------------------------------------------------------
-# 6) Figura principal (tema publicable, ejes visibles)
+# 6) Figura principal 
 #---------------------------------------------------------
 p_main <- ggplot(pred_grid,
                  aes(x = INT_Z, y = IMC_pred, color = Ciudad)) +
@@ -1150,7 +1150,7 @@ tbl_grob <- tableGrob(
 )
 
 #---------------------------------------------------------
-# 8) FIX DEFINITIVO: evitar recorte de "Coeficiente"
+# 8) FIX 
 #---------------------------------------------------------
 # Ensanchar primera columna
 tbl_grob$widths[1] <- unit(2.6, "cm")
@@ -1191,7 +1191,7 @@ final_plot <- plot_grid(
 final_plot
 
 #---------------------------------------------------------
-# 10) Exportación recomendada (líneas suaves, no pixeladas)
+# 10) Exportación 
 #---------------------------------------------------------
 library(grid)
 
@@ -1273,7 +1273,7 @@ pred_grid <- pred_grid %>%
   )
 
 #---------------------------------------------------------
-# 5) Paleta Nature / Lancet
+# 5) Paleta
 #---------------------------------------------------------
 city_colors <- c(
   "Bogotá"       = "#0072B2",
@@ -1382,7 +1382,7 @@ final_plot_STOPS <- plot_grid(
 final_plot_STOPS
 
 #---------------------------------------------------------
-# 10) Exportación recomendada (líneas suaves, no pixeladas)
+# 10) Exportación 
 #---------------------------------------------------------
 library(grid)
 
@@ -1436,7 +1436,7 @@ u_city <- mod$ranefMat$CITY_NAME %>%
 
 #---------------------------------------------------------
 # 3) Crear grid DISCRETO Q1–Q4
-#    Usamos codificación 0,1,2,3 (Q1=0) para que:
+#    Uso codificación 0,1,2,3 (Q1=0) para que:
 #    IMC = (b0 + u0) + (b_STOPS + u_slope)*delta
 #---------------------------------------------------------
 q_levels <- c("Q1", "Q2", "Q3", "Q4")
@@ -1585,7 +1585,7 @@ final_plot_STOPS_Q <- plot_grid(
 final_plot_STOPS_Q
 
 #---------------------------------------------------------
-# 10) Exportación recomendada (líneas suaves, no pixeladas)
+# 10) Exportación 
 #---------------------------------------------------------
 library(grid)
 
@@ -1778,7 +1778,7 @@ final_plot_STOPS3 <- plot_grid(
 final_plot_STOPS3
 
 #---------------------------------------------------------
-# 9) Exportar PNG (recomendado para Word y antialiasing)
+# 9) Exportar PNG 
 #---------------------------------------------------------
  library(ragg)
  ragg::agg_png(
@@ -1864,7 +1864,7 @@ pred_green <- pred_green %>%
   )
 
 #---------------------------------------------------------
-# 5) Paleta Nature/Lancet
+# 5) Paleta
 #---------------------------------------------------------
 city_colors <- c(
   "Bogotá"       = "#0072B2",
@@ -1976,7 +1976,7 @@ final_plot_GREEN <- plot_grid(
 final_plot_GREEN
 
 #---------------------------------------------------------
-# 9) Exportar PNG (Word-friendly, líneas suaves)
+# 9) Exportar PNG 
 #---------------------------------------------------------
  library(ragg)
  ragg::agg_png(
@@ -2165,7 +2165,7 @@ final_plot_HEALTH <- plot_grid(
 final_plot_HEALTH
 
 #---------------------------------------------------------
-# 9) Exportar PNG (Word-friendly, líneas suaves)
+# 9) Exportar PNG 
 #---------------------------------------------------------
  library(ragg)
  ragg::agg_png(
@@ -2242,7 +2242,7 @@ pred_unhealth <- pred_unhealth %>%
   )
 
 #---------------------------------------------------------
-# 5) Paleta Nature/Lancet (misma)
+# 5) Paleta
 #---------------------------------------------------------
 city_colors <- c(
   "Bogotá"       = "#0072B2",
@@ -2354,7 +2354,7 @@ final_plot_UNHEALTH <- plot_grid(
 final_plot_UNHEALTH
 
 #---------------------------------------------------------
-# 9) Exportar PNG (opcional)
+# 9) Exportar PNG
 #---------------------------------------------------------
  library(ragg)
  ragg::agg_png(
@@ -2369,6 +2369,7 @@ final_plot_UNHEALTH
  dev.off()
 
 ```
+
 
 
 
