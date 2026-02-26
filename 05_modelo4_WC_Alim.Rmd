@@ -618,7 +618,6 @@ rbee_city <- get_RBEE(MOD4_F1, "CITY_NAME")     # cols: (Intercept), INT_Z, GREE
 
 #========================================================
 # 3) Armar bases nivel 2 para graficar (1 fila por cluster)
-#    Ajusta aquí cuáles son tus covariables L2.
 #========================================================
 L2_vars_buf <- c("DENS_HEALTH_LOG_ZC","DENS_UNHEALTH_LOG_ZC")  # <- edita si aplica
 
@@ -656,7 +655,6 @@ plot_rbee_cat <- function(df, x, rbee, title){
 
 #========================================================
 # 5) Linealidad + homocedasticidad nivel 2 (BUF_ID_CITY)
-#    (en tu flujograma: RBEE vs cada variable L2)
 #========================================================
 
 # Nota: en rbee_buf el RBEE del intercepto suele llamarse "(Intercept)"
@@ -759,7 +757,7 @@ form_MOD3_F1 <- WC ~
                   (1 + DENS_HEALTH_LOG_ZC + DENS_UNHEALTH_LOG_ZC | CITY_NAME)
 
 #===========================================================
-# 1) Parámetros de interés (según summary/str reales)
+# 1) Parámetros de interés
 #===========================================================
 fix_primary <- c(
   "DENS_HEALTH_LOG_ZC",
@@ -815,7 +813,7 @@ thr_betaSE <- 1.0     # |Δβ|/SE_full > 1
 thr_var    <- 0.20    # Δ varianza relativa > 20%
 
 #===========================================================
-# 4) Extraer FULL (optimiza)
+# 4) Extraer FULL
 #===========================================================
 # (a) betas y SE full
 b_full  <- safe_extract_named(mod_full$coef, fix_primary)
@@ -2146,6 +2144,7 @@ ggplot(plot_df, aes(x = slope, y = y, color = EDU_GROUP)) +
     plot.margin   = margin(8, 28, 8, 8)
   )
 ```
+
 
 
 
