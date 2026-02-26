@@ -720,7 +720,7 @@ library(ggplot2)
 library(dplyr)
 
 #========================
-# 0) Datos (asegura orden y sin NA en variables clave)
+# 0) Datos
 #========================
 dat <- BASE_ESTUDIO_WC_Z %>%
   filter(!is.na(BMI), !is.na(AGE), !is.na(SEX), !is.na(EDU_GROUP),
@@ -805,7 +805,7 @@ p_comp <- ggplot(diag_all, aes(x = AGE, y = RME)) +
 
 print(p_comp)
 
-# (Opcional) solo el modelo cuadrático (para tu flujo)
+# (Opcional) solo el modelo cuadrático 
 p_quad <- ggplot(diag_quad, aes(x = AGE, y = RME)) +
   geom_point(alpha = 0.25) +
   geom_smooth(se = FALSE, method = "loess") +
@@ -816,7 +816,7 @@ p_quad <- ggplot(diag_quad, aes(x = AGE, y = RME)) +
 print(p_quad)
 
 #========================
-# 6) (Opcional) AIC/BIC para complementar la decisión
+# 6) AIC/BIC para complementar la decisión
 #========================
 get_ic_wemix <- function(mod, n){
   k_fix <- length(mod$coef)
@@ -869,7 +869,7 @@ diag_L1_quad <- get_RCE(m2_quad, dat)
 
 #========================
 # 2) Homocedasticidad Nivel 1
-#    (A) Según tu flujograma: RCE vs Edad
+#  RCE vs Edad
 #========================
 p_homo_age <- ggplot(diag_L1_quad, aes(x = AGE, y = RCE)) +
   geom_point(alpha = 0.25) +
@@ -952,7 +952,6 @@ rbee_city <- get_RBEE(MOD2_F1, "CITY_NAME")     # cols: (Intercept), INT_Z, GREE
 
 #========================================================
 # 3) Armar bases nivel 2 para graficar (1 fila por cluster)
-#    Ajusta aquí cuáles son tus covariables L2.
 #========================================================
 L2_vars_buf <- c("INT_Z","GREEN_Z","STOPS_Q4_NUM","STOPS_Q4")  # <- edita si aplica
 
@@ -990,7 +989,6 @@ plot_rbee_cat <- function(df, x, rbee, title){
 
 #========================================================
 # 5) Linealidad + homocedasticidad nivel 2 (BUF_ID_CITY)
-#    (en tu flujograma: RBEE vs cada variable L2)
 #========================================================
 
 # Nota: en rbee_buf el RBEE del intercepto suele llamarse "(Intercept)"
@@ -1144,7 +1142,6 @@ get_RBEE <- function(mod, group){
 
 #========================================================
 # 2) Extraer RBEE del intercepto para BUF_ID_CITY en los 3 modelos
-#    (ajusta los objetos a tus nombres reales)
 #    - m_L2_lin
 #    - m_GREEN_quad
 #    - m_GREEN_cubic
@@ -1165,7 +1162,6 @@ rbee_all <- bind_rows(rbee_lin, rbee_quad, rbee_cub) %>%
 
 #========================================================
 # 4) Pasar a formato largo SOLO para el intercepto (más limpio)
-#    Nota: en ranefMat el intercepto suele llamarse "(Intercept)"
 #========================================================
 rbee_all_long <- rbee_all %>%
   pivot_longer(cols = c("(Intercept)"),
@@ -1282,7 +1278,7 @@ dat      <- BASE_ESTUDIO_WC_Z
 mod_full <- MOD2_F1
 weights_vec <- c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
 
-# Fórmula (corrige el "+ +")
+# Fórmula 
 form_MOD2_F1 <- WC ~
   AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
   STOPS_Q4_NUM +
@@ -1656,7 +1652,7 @@ stops_levels <- tibble(
     IC_95 = ifelse(Nivel == "Q1", "", "")
   )
 
-# Arreglar columnas (sin trucos raros)
+# Arreglar columnas 
 stops_levels <- stops_levels %>%
   mutate(
     est = sapply(ci, `[[`, "est"),
@@ -1676,7 +1672,7 @@ ci_green <- wald_ci(
 )
 
 #----------------------------
-# 5) Construir tabla en formato “como tu imagen”
+# 5) Construir tabla 
 #----------------------------
 tab <- tibble(
   Variable = c(
@@ -1731,7 +1727,7 @@ city_var <- "CITY_NAME"
 #----------------------------
 b_INT   <- "INT_Z"
 b_GREEN <- "GREEN_Z"
-b_STOPS <- "STOPS_Q4_NUM"   # <- asumiendo tu modelo numérico (1..4) con referencia Q1
+b_STOPS <- "STOPS_Q4_NUM"   
 
 stopifnot(all(c(b_INT, b_GREEN, b_STOPS) %in% names(mod$coef)))
 
@@ -1756,7 +1752,7 @@ sd_city <- dat %>%
 
 #----------------------------
 # 4) Componentes para IC Wald del slope ciudad-específico
-#    Var(beta_city) ≈ Var(beta_fix) + Var(u_slope)  (misma aproximación que vienes usando)
+#    Var(beta_city) ≈ Var(beta_fix) + Var(u_slope)  
 #----------------------------
 V <- mod$cov_mat
 G <- mod$varVC[[city_var]]
@@ -1803,7 +1799,7 @@ df_INT <- city_eff %>%
   ) %>%
   dplyr::select(CITY_NAME, expos, contraste, sd_ciudad, est, lwr, upr)
 
-# STOPS (+1 cuartil). Si quieres también Q4 vs Q1, lo agrego debajo como opción.
+# STOPS (+1 cuartil)
 df_STOPS_1Q <- city_eff %>%
   mutate(
     expos = "Distancia a paraderos",
@@ -1816,7 +1812,7 @@ df_STOPS_1Q <- city_eff %>%
   ) %>%
   dplyr::select(CITY_NAME, expos, contraste, sd_ciudad, est, lwr, upr)
 
-# (Opcional) STOPS: Q4 vs Q1 (Δ=3). Descomenta si lo quieres en la tabla:
+# (Opcional) STOPS: Q4 vs Q1 (Δ=3). 
 # df_STOPS_Q4vQ1 <- city_eff %>%
 #   mutate(
 #     expos = "Distancia a paraderos",
@@ -1845,7 +1841,6 @@ df_GREEN <- city_eff %>%
 #----------------------------
 # 6) Promedio poblacional (u = 0) al final
 #    - Para INT/GREEN: sigue siendo por 1 SD (Z por ciudad) pero sin "sd_ciudad" específica
-#      (si quieres, puedo poner SD global o promedio ponderado de SDs)
 #----------------------------
 pop <- tibble(
   CITY_NAME = "Promedio poblacional",
@@ -1946,7 +1941,7 @@ stops_deltas <- stops_q_city %>%
   )
 
 #--------------------------------------------------
-# 3) Tabla final “publicable”
+# 3) Tabla final
 #--------------------------------------------------
 pretty_city <- c(
   "BOGOTA" = "Bogotá",
@@ -2005,7 +2000,7 @@ stops_step_table
 # 3) Distancia a paraderos (STOPS_Q4_NUM): sin interacción
 # Todo por CIUDAD + GLOBAL (u=0)
 #
-# Var(Wald) usada (misma aproximación que vienes usando):
+# Var(Wald) 
 #  Var(beta_ciudad) ≈ Var(combinación fija) + Var(u_slope)
 #=========================================================
 
@@ -2319,7 +2314,7 @@ plot_df <- bind_rows(df_city, pop) %>%
   ) %>%
   filter(!is.na(CITY_NAME))
 
-# --- Paleta publicable (Okabe–Ito) + promedio en negro/gris
+
 pal_city <- c(
   "BOGOTA" = "#0072B2",
   "MEDELLIN" = "#D55E00",
@@ -2518,7 +2513,6 @@ pop_df <- tibble(
 
 #----------------------------
 # 6) Orden ciudades + apilado por EDU_GROUP
-#    (ojo: tu modelo tiene 5 ciudades)
 #----------------------------
 city_order <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA","Promedio poblacional")
 
@@ -2526,7 +2520,6 @@ plot_df <- bind_rows(df_city, pop_df) %>%
   mutate(
     CITY_NAME = as.character(CITY_NAME)
   ) %>%
-  # Mantener solo las que están en tu orden (y evitar NA)
   filter(CITY_NAME %in% city_order) %>%
   mutate(
     CITY_NAME = factor(CITY_NAME, levels = city_order),
@@ -2607,7 +2600,6 @@ ggplot(plot_df, aes(x = slope, y = y, color = EDU_GROUP)) +
 #=========================================================
 # Forest plot: STOPS_Q4_NUM (contrastes vs Q1) por ciudad
 # SIN estratificar; 1 color por ciudad; promedio naranja
-# Estética tipo “paper” (sin ggtext)
 # Modelo: MOD2_F1 | Desenlace: WC
 #=========================================================
 
@@ -2983,6 +2975,7 @@ ggplot(plot_df, aes(x = slope, y = y, color = EDU_GROUP)) +
   )
 
 ```
+
 
 
 
