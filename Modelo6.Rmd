@@ -1,0 +1,1908 @@
+---
+title: "Modelo 6"
+author: "Sebastian A Gutierrez-Romero"
+date: "2026-01-23"
+output: html_document
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readxl)
+library(dplyr) 
+library(ggplot2) 
+library(lme4)
+library(lmerTest)
+library(lmtest)
+library(performance) 
+library(WeMix)
+library(ggeffects)
+library(survey)
+library(tidyr)
+library(knitr)
+library(car)
+library(describedata)
+library(modelsummary)
+library(ggrepel)
+library(stringr)
+library(gt)
+library(forcats)
+library(purrr)
+
+
+BOGOTA <- read_excel("COPEN_BOGOTA_DATA_FINAL.xlsx")
+BARRANQUILLA <- read_excel("COPEN_BARRANQUILLA_DATA_FINAL.xlsx")
+MEDELLIN <- read_excel("COPEN_MEDELLIN_DATA_FINAL.xlsx")
+CALI <- read_excel("COPEN_CALI_DATA_FINAL.xlsx")
+BUCARAMANGA <- read_excel("COPEN_BUCARAMANGA_DATA_FINAL.xlsx")
+
+# Creo los grupos de variables
+
+vars_character <- c(
+  "ID", "ID_SECTOR", "ID_SECTION", "ID_MZN", "ID_SUBURB",
+  "SUBURB_NAME", "BUFFER_ID50", "BUFFER_ID60", "BUFFER_ID70",
+  "BUFFER_ID80", "BUFFER_ID90", "BUFFER_ID95",
+  "COUNTRY", "CITY_CODE", "ADDRESS_1", "SUBURB",
+  "ADDRESS_2", "FULL_ADDRESS", "RECORD"
+)
+
+vars_factor <- c(
+  "CITY_NAME", "SEX", "SOC_ECON_LEVEL", "JOB",
+  "EDU_LEVEL", "MARITAL_STATUS",
+  "PREGNANCY", "DIABETES_PREV"
+)
+
+vars_numeric <- c(
+  "EXP_FACTOR", "LATITUDE", "LONGITUDE", "AGE",
+  "HEIGHT", "WEIGHT", "WAIST_CIRCUNF",
+  "AREA_KM2", "INT_TOPOL_BY_KM2", "INT_WALK_BY_KM2",
+  "DIST_STOPS_MIN", "DIST_STOPS_MAX", "DIST_STOPS_MEDIAN",
+  "DIST_STOPS_Q1", "DIST_STOPS_Q3", "DIST_STOPS_IQR",
+  "DIST_STOPS_MEAN", "DIST_STOPS_STDEV",
+  "NDVI_MEAN", "NDVI_MEDIAN", "NDVI_STDEV",
+  "NDVI_MIN", "NDVI_MAX", "NDVI_VAR",
+  "GREEN_PERC", "GREEN_AREA_M2",
+  "DENS_SUPERMARKET", "DENS_GREENGROCER",
+  "DENS_MARKETPLACE", "DENS_HEALTH_MARKET",
+  "DENS_FAST_TOTAL", "DENS_BAKERY_TOTAL",
+  "DENS_UNHEALTH_MARKET",
+  "SURVEY_LONG", "SURVEY_LAT", "GLUCOSE"
+)
+
+vars_integer <- c(
+  "INT_TOPOL_BY_BUFFER", "INT_WALK_BY_BUFFER",
+  "N_SUPERMARKET", "N_GREENGROCER", "N_CONVENIENCE",
+  "N_MARKETPLACE", "N_HEALTH_MARKET",
+  "N_FAST", "N_REST_FF", "N_FOODCOURT",
+  "N_FAST_TOTAL", "N_BAKERY", "N_PASTRY",
+  "N_CONFECTIONERY", "N_CAFE", "N_ICE",
+  "N_BAKERY_TOTAL", "N_UNHEALTH_MARKET",
+  "PEOPLE_AT_HOME"
+)
+
+# Función para especificar la clase de la variable en cada base de datos
+
+estandarizar_base <- function(df) {
+
+  df %>%
+    mutate(
+      across(any_of(vars_character), as.character),
+      across(any_of(vars_factor), ~ factor(.)),
+      across(any_of(vars_numeric), as.numeric),
+      across(any_of(vars_integer), ~ as.integer(round(.)))
+    )
+
+}
+
+# Aplicar la función en cada base
+
+bogota <- estandarizar_base(BOGOTA)
+medellin <- estandarizar_base(MEDELLIN)
+cali <- estandarizar_base(CALI)
+bucaramanga <- estandarizar_base(BUCARAMANGA)
+barranquilla <- estandarizar_base(BARRANQUILLA)
+
+
+bases <- list(
+  bogota = bogota,
+  medellin = medellin,
+  cali = cali,
+  bucaramanga = bucaramanga,
+  barranquilla = barranquilla
+)
+
+base_total <- bind_rows(
+  bogota,
+  medellin,
+  cali,
+  bucaramanga,
+  barranquilla
+)
+
+base_total <- base_total %>%
+  rename(WC = WAIST_CIRCUNF)
+
+base_total <- base_total %>%
+  mutate(
+    # 1) AGE_GROUP
+    AGE_GROUP = case_when(
+      AGE < 18 ~ 0,
+      AGE >= 18 & AGE <= 39 ~ 1,
+      AGE >= 40 & AGE <= 59 ~ 2,
+      AGE >= 60 & AGE <= 80 ~ 3,
+      TRUE ~ NA_real_
+    ),
+    AGE_GROUP = factor(
+      AGE_GROUP,
+      levels = c(0, 1, 2, 3),
+      labels = c("Menor de 18 años", "18-39 años", "40-59 años", "60-80 años")
+    ),
+
+    # 2) EDU_GROUP 
+    EDU_GROUP = case_when(
+      EDU_LEVEL %in% c(1, 2) ~ 1,       # Primaria o menos
+      EDU_LEVEL %in% c(3, 4) ~ 2,       # Secundaria o técnico
+      EDU_LEVEL %in% c(5, 6) ~ 3,       # Profesional o mayor
+      TRUE ~ NA_real_
+    ),
+    EDU_GROUP = factor(
+      EDU_GROUP,
+      levels = c(1, 2, 3),
+      labels = c("Primaria o menos", "Secundaria o técnico", "Profesional o mayor")
+    ),
+
+    # 3) SEL_GROUP (basado en SOC_ECON_LEVEL: 1-6)
+    SEL_GROUP = case_when(
+      SOC_ECON_LEVEL %in% c(1, 2) ~ 1,
+      SOC_ECON_LEVEL == 3 ~ 2,
+      SOC_ECON_LEVEL == 4 ~ 3,
+      SOC_ECON_LEVEL %in% c(5, 6) ~ 4,
+      TRUE ~ NA_real_
+    ),
+    SEL_GROUP = factor(
+      SEL_GROUP,
+      levels = c(1, 2, 3, 4),
+      labels = c("Estrato 1 y 2", "Estrato 3", "Estrato 4", "Estrato 5 y 6")
+    ),
+
+    # 4) BMI (kg / m^2) - HEIGHT en cm
+    BMI = WEIGHT / ( (HEIGHT / 100)^2 ),
+
+    # 5) BMI_CAT (solo adultos; <18 = NA)
+    BMI_CAT = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI < 18.5 ~ 1,
+      BMI >= 18.5 & BMI < 25 ~ 2,
+      BMI >= 25 & BMI < 30 ~ 3,
+      BMI >= 30 ~ 4,
+      TRUE ~ NA_real_
+    ),
+    BMI_CAT = factor(
+      BMI_CAT,
+      levels = c(1, 2, 3, 4),
+      labels = c("Bajo peso", "Normopeso", "Sobrepeso", "Obesidad")
+    ),
+
+    # 6) OVERWEIGHT (solo sobrepeso vs resto; adultos)
+    OVERWEIGHT = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 25 & BMI < 30 ~ 2,
+      !is.na(BMI) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OVERWEIGHT = factor(
+      OVERWEIGHT,
+      levels = c(1, 2),
+      labels = c("No sobrepeso", "Sobrepeso")
+    ),
+
+    # 7) OBESITY (adultos)
+    OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 30 ~ 2,
+      BMI < 30 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OBESITY = factor(
+      OBESITY,
+      levels = c(1, 2),
+      labels = c("No obesidad", "Obesidad")
+    ),
+
+    # 8) OVERW_OBESITY (adultos)
+    OVERW_OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 25 ~ 2,
+      BMI < 25 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OVERW_OBESITY = factor(
+      OVERW_OBESITY,
+      levels = c(1, 2),
+      labels = c("No (IMC <25)", "Sí (IMC >=25)")
+    ),
+
+    # 9) ABDOM_OBESITY (adultos; umbrales que diste)
+    # SEX: 1=Masculino, 2=Femenino (según tu diccionario)
+    ABDOM_OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      SEX == 2 & WC >= 90 ~ 2,  # Mujeres
+      SEX == 1 & WC >= 94 ~ 2,  # Hombres
+      !is.na(WC) & SEX %in% c(1,2) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    ABDOM_OBESITY = factor(
+      ABDOM_OBESITY,
+      levels = c(1, 2),
+      labels = c("No", "Sí")
+    ),
+
+    # 10) DIABETES_GLUCOSE (>=200 mg/dl)
+    DIABETES_GLUCOSE = case_when(
+      GLUCOSE < 200 ~ 1,
+      GLUCOSE >= 200 ~ 2,
+      TRUE ~ NA_real_
+    ),
+    DIABETES_GLUCOSE = factor(
+      DIABETES_GLUCOSE,
+      levels = c(1, 2),
+      labels = c("No", "Sí")
+    ),
+
+    # 11) DIABETES (antecedente o glucometría)
+    # DIABETES_PREV: 0=No, 1=Sí (según tu tabla)
+    DIABETES = case_when(
+      DIABETES_GLUCOSE == "Sí" | DIABETES_PREV %in% c(1, "1", "Sí", "Si") ~ 2,
+      DIABETES_GLUCOSE == "No" & DIABETES_PREV %in% c(0, "0", "No") ~ 1,
+      TRUE ~ NA_real_
+    ),
+    DIABETES = factor(
+      DIABETES,
+      levels = c(1, 2),
+      labels = c("No diabetes", "Diabetes")
+    ),
+    SEX = factor(
+      SEX,
+      levels = c(1, 2),
+      labels = c("Hombre", "Mujer")
+    ),
+    JOB_GROUP = case_when(
+      JOB == 1 ~ 1,
+      JOB == 2 ~ 2,
+      JOB == 3 ~ 2,
+      JOB == 4 ~ 3,
+      JOB == 5 ~ 4,
+      JOB == 6 ~ 5,
+      JOB == 7 ~ 6,
+      JOB == 8 ~ 7,
+      TRUE ~ NA_real_
+    ),
+    JOB_GROUP = factor(
+      JOB_GROUP,
+      levels = c(1,2,3,4,5,6,7),
+      labels = c("Empleado",
+                 "Independiente",
+                 "Pensionado",
+                 "Desempleado",
+                 "Estudiante",
+                 "Hogar",
+                 "Menor en casa")
+    ),
+    HOME_PEOPLE = case_when(
+      PEOPLE_AT_HOME == 1 ~ 1,
+      PEOPLE_AT_HOME == 2 ~ 2,
+      PEOPLE_AT_HOME == 3 ~ 3,
+      PEOPLE_AT_HOME >= 4 ~ 4,
+      TRUE ~ NA_real_
+      ),
+    HOME_PEOPLE = factor(
+      HOME_PEOPLE,
+      levels = c(1,2,3,4),
+      labels = c("Vive solo",
+                 "Vive con una persona",
+                 "Vive con dos personas",
+                 "Vive con tres o más personas")
+    )
+  )
+
+BASE_ESTUDIO <- base_total %>%
+  filter(
+    AGE >= 18,
+    !(SEX == 2 & PREGNANCY == "Sí")
+  )
+
+# Pesos 2 y 3 para PARA USAR PAQUETE WEMIX
+    
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR2 = 1)
+    
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR3 = 1)
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR4 = 1)
+
+# CREAR ID UNICO PARA BUFFERS anidados a la ciudad
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BUF_ID_CITY = interaction(CITY_CODE, BUFFER_ID70, drop = TRUE)
+  )
+
+# CREAR ID UNICO PARA BARRIOS anidados a la ciudad
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BARRIO_ID_CITY = interaction(CITY_CODE, ID_SUBURB, drop = TRUE)
+  )
+
+# Crear variables del AFC agrupadas al buffer
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  group_by(BUF_ID_CITY) %>%
+  mutate(
+    # Ambiente caminable
+    INT_WALK_BY_KM2_L2 = mean(INT_WALK_BY_KM2, na.rm = TRUE),
+
+    # Transporte público (robusta)
+    DIST_STOPS_MEDIAN_L2 = median(DIST_STOPS_MEDIAN, na.rm = TRUE),
+
+    # Zonas verdes
+    GREEN_PERC_L2 = mean(GREEN_PERC, na.rm = TRUE),
+
+    # Ambiente alimentario
+    DENS_HEALTH_MARKET_L2 = mean(DENS_HEALTH_MARKET, na.rm = TRUE),
+    DENS_UNHEALTH_MARKET_L2 = mean(DENS_UNHEALTH_MARKET, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Incorporación de cambios en análisis descriptivo
+
+# Aplicar cambios
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    WEIGHT = ifelse(ID == 757742, 83.8, WEIGHT),
+    WEIGHT = ifelse(ID %in% c(328341, 557847, 806458), NA_real_, WEIGHT),
+    HEIGHT = ifelse(ID %in% c(328341, 557847, 806458, 348569), NA_real_, HEIGHT)
+  )
+
+# Recalcular BMI solo si hay WEIGHT y HEIGHT
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BMI = ifelse(is.na(WEIGHT) | is.na(HEIGHT),
+                 NA_real_,
+                 WEIGHT / ((HEIGHT/100)^2))
+  )
+
+# Excluir outliers de BMI >45 Y WC <56
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BMI = ifelse(BMI > 45, NA_real_, BMI),
+    WC  = ifelse(WC  < 56, NA_real_, WC))
+
+# NA en BMI implausibles dado el WC
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+BMI = ifelse(ID %in% c(328341, 497225, 96778, 912698), NA_real_, BMI))
+
+
+# AGREGAR VARIABLE DE POBLACIÓN POR CIUDAD (DANE, proyeccion 2022)
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    POPULATION = case_when(
+      CITY_NAME == "BOGOTA"        ~ 7842853,
+      CITY_NAME == "MEDELLIN"      ~ 2530398,
+      CITY_NAME == "CALI"          ~ 2229598,
+      CITY_NAME == "BARRANQUILLA"  ~ 1309553,
+      CITY_NAME == "BUCARAMANGA"   ~ 600251,
+      TRUE                         ~ NA_real_
+    )
+  )
+  
+# Quitar NA para identificar outliers en modelo multinivel y que los codigos corran más rápido.
+  
+
+BASE_ESTUDIO_WC <- BASE_ESTUDIO %>%
+  filter(!is.na(WC))
+
+#--------------------------------------------------
+# Estandarización por ciudad
+#--------------------------------------------------
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    INT_Z           = as.numeric(scale(INT_WALK_BY_KM2_L2)),
+    GREEN_Z         = as.numeric(scale(GREEN_PERC_L2)),
+    DENS_HEALTH_Z   = as.numeric(scale(DENS_HEALTH_MARKET_L2)),
+    DENS_UNHEALTH_Z = as.numeric(scale(DENS_UNHEALTH_MARKET_L2))
+  ) %>%
+  ungroup()
+
+#--------------------------------------------------
+# Distancia a paraderos
+#--------------------------------------------------
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    q_pos = ntile(
+      if_else(DIST_STOPS_MEDIAN_L2 > 0,
+              DIST_STOPS_MEDIAN_L2,
+              NA_real_),
+      4
+    ),
+    STOPS_CAT = case_when(
+      DIST_STOPS_MEDIAN_L2 == 0 ~ "Sin paraderos",
+      DIST_STOPS_MEDIAN_L2 > 0  ~ paste0("Q", q_pos)
+    ),
+    STOPS_CAT = factor(
+      STOPS_CAT,
+      levels = c("Sin paraderos", "Q1", "Q2", "Q3", "Q4")
+    )
+  ) %>%
+  ungroup() %>%
+  select(-q_pos)
+
+#--------------------------------------------------
+# Variable alternativa (ceros → Q4)
+#--------------------------------------------------
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(
+    STOPS_Q4 = fct_collapse(
+      STOPS_CAT,
+      Q4 = c("Q4", "Sin paraderos")
+    ),
+    STOPS_Q4 = factor(STOPS_Q4, levels = c("Q1","Q2","Q3","Q4"))
+  )
+
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(STOPS_Q4_NUM = as.numeric(STOPS_Q4))  # Q1=1, Q2=2, Q3=3, Q4=4
+
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(
+    DENS_HEALTH_LOG  = log1p(DENS_HEALTH_MARKET_L2),
+    DENS_UNHEALTH_LOG = log1p(DENS_UNHEALTH_MARKET_L2),
+
+    # Z global (sobre toda la muestra)
+    DENS_HEALTH_LOG_ZG  = as.numeric(scale(DENS_HEALTH_LOG)),
+    DENS_UNHEALTH_LOG_ZG = as.numeric(scale(DENS_UNHEALTH_LOG))
+  ) %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    # Z intra-ciudad (sobre log)
+    DENS_HEALTH_LOG_ZC  = as.numeric(scale(DENS_HEALTH_LOG)),
+    DENS_UNHEALTH_LOG_ZC = as.numeric(scale(DENS_UNHEALTH_LOG))
+  ) %>%
+  ungroup()
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(
+    GREEN_Z2 = GREEN_Z^2,
+    GREEN_Z3 = GREEN_Z^3,
+    INT_Z2   = INT_Z^2,
+    INT_Z3   = INT_Z^3
+  )  
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>% 
+  mutate(AGE_c = AGE - mean(AGE, na.rm = TRUE),
+                      AGE_c2 = AGE_c^2)
+```
+
+
+# Modelos base (2 y 4)
+
+MOD2_F1 <- mix(WC ~
+                    AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP + 
+                    STOPS_Q4_NUM +
+                    INT_Z*EDU_GROUP + + 
+                    GREEN_Z*EDU_GROUP +
+                    (1 | BUF_ID_CITY) + 
+                    (1 + INT_Z + STOPS_Q4_NUM + GREEN_Z | CITY_NAME),
+  data = BASE_ESTUDIO_WC_Z,
+  weights = c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
+)
+
+MOD4_F1 <- mix(WC ~
+                  AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP + 
+                  DENS_HEALTH_LOG_ZC*EDU_GROUP +
+                  DENS_UNHEALTH_LOG_ZC*EDU_GROUP +
+                  (1 | BUF_ID_CITY) + 
+                  (1 + DENS_HEALTH_LOG_ZC + DENS_UNHEALTH_LOG_ZC | CITY_NAME),
+  data = BASE_ESTUDIO_WC_Z,
+  weights = c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
+)
+
+```{r}
+MOD6 <- mix(WC ~
+             AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
+             # AFC ACTIVIDAD FÍSICA
+             STOPS_Q4_NUM +
+             INT_Z*EDU_GROUP + 
+             GREEN_Z*EDU_GROUP +
+             # AFC ALIMENTACION
+             DENS_HEALTH_LOG_ZC*EDU_GROUP +
+            DENS_UNHEALTH_LOG_ZC*EDU_GROUP +
+             # RANDOM INTERCEPT POR BUFFER
+             (1 | BUF_ID_CITY) +
+             # RANDOM INTERCPT Y RANDOM SLOP POR CIUDAD
+             (1 + INT_Z + STOPS_Q4_NUM + GREEN_Z  + DENS_HEALTH_LOG_ZC + DENS_UNHEALTH_LOG_ZC | CITY_NAME),
+  data = BASE_ESTUDIO_WC_Z,
+  weights = c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
+)
+
+summary(MOD6)
+```
+
+
+```{r}
+#=========================================================
+# Tabla por ciudad: INT, STOPS, GREEN, HEALTH, UNHEALTH
+# Modelo: MOD5
+# IC95% Wald (WeMix)
+#=========================================================
+
+library(dplyr)
+library(tibble)
+library(forcats)
+
+mod <- MOD6
+dat <- BASE_ESTUDIO_WC_Z
+city_var <- "CITY_NAME"
+
+#----------------------------
+# 1) Exposiciones de interés
+#----------------------------
+expo_map <- tibble(
+  bname = c("INT_Z",
+            "STOPS_Q4_NUM",
+            "GREEN_Z",
+            "DENS_HEALTH_LOG_ZC",
+            "DENS_UNHEALTH_LOG_ZC"),
+  expos = c("Densidad de intersecciones",
+            "Distancia a paraderos",
+            "Porcentaje de zonas verdes",
+            "Densidad de supermercados",
+            "Densidad de restaurantes"),
+  contraste = c("por 1 SD (Z)",
+                "+1 cuartil (tendencia; ref=Q1)",
+                "por 1 SD (Z)",
+                "por 1 SD (ZC)",
+                "por 1 SD (ZC)")
+)
+
+stopifnot(all(expo_map$bname %in% names(mod$coef)))
+
+#----------------------------
+# 2) Random slopes por ciudad (BLUPs)
+#----------------------------
+u_city <- as.data.frame(mod$ranefMat[[city_var]]) |>
+  rownames_to_column("CITY_NAME")
+
+stopifnot(all(expo_map$bname %in% names(u_city)))
+
+#----------------------------
+# 3) Matrices de varianza
+#----------------------------
+V <- mod$cov_mat
+G <- mod$varVC[[city_var]]
+
+#----------------------------
+# 4) Función Wald ciudad-específica
+#----------------------------
+wald_city <- function(b){
+
+  beta_fix <- unname(mod$coef[b])
+  var_fix  <- V[b, b]
+  var_u    <- G[b, b]
+  var_tot  <- var_fix + var_u
+  se_tot   <- sqrt(var_tot)
+
+  tibble(
+    bname = b,
+    beta_fix = beta_fix,
+    se = se_tot
+  )
+}
+
+wald_info <- expo_map$bname |> lapply(wald_city) |> bind_rows()
+
+#----------------------------
+# 5) Efectos por ciudad
+#----------------------------
+city_eff <- u_city |>
+  select(CITY_NAME, all_of(expo_map$bname)) |>
+  pivot_longer(
+    cols = -CITY_NAME,
+    names_to = "bname",
+    values_to = "u_city"
+  ) |>
+  left_join(wald_info, by = "bname") |>
+  left_join(expo_map, by = "bname") |>
+  mutate(
+    est = beta_fix + u_city,
+    lwr = est - 1.96 * se,
+    upr = est + 1.96 * se
+  ) |>
+  select(CITY_NAME, expos, contraste, est, lwr, upr)
+
+#----------------------------
+# 6) Promedio poblacional (u = 0)
+#----------------------------
+pop_eff <- wald_info |>
+  left_join(expo_map, by = "bname") |>
+  mutate(
+    CITY_NAME = "Promedio poblacional",
+    est = beta_fix,
+    lwr = est - 1.96 * se,
+    upr = est + 1.96 * se
+  ) |>
+  select(CITY_NAME, expos, contraste, est, lwr, upr)
+
+#----------------------------
+# 7) Formato final
+#----------------------------
+city_order <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA","Promedio poblacional")
+
+pretty_city <- c(
+  "BOGOTA"="Bogotá",
+  "MEDELLIN"="Medellín",
+  "CALI"="Cali",
+  "BARRANQUILLA"="Barranquilla",
+  "BUCARAMANGA"="Bucaramanga",
+  "Promedio poblacional"="Promedio poblacional"
+)
+
+table_city <- bind_rows(city_eff, pop_eff) |>
+  mutate(
+    CITY_NAME = factor(CITY_NAME, levels = city_order),
+    Ciudad = dplyr::recode(as.character(CITY_NAME), !!!pretty_city),
+    `Efecto (β)` = sprintf("%.3f", est),
+    `IC (95%)` = sprintf("%.3f a %.3f", lwr, upr)
+  ) |>
+  arrange(CITY_NAME, expos) |>
+  select(
+    Ciudad,
+    Exposición = expos,
+    Contraste = contraste,
+    `Efecto (β)`,
+    `IC (95%)`
+  )
+
+table_city
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tibble)
+
+mod <- MOD6
+dat <- BASE_ESTUDIO_WC_Z
+city_var <- "CITY_NAME"
+
+#---------------------------------------------------------
+# 1) Objetos base del modelo
+#---------------------------------------------------------
+V <- mod$cov_mat
+G <- mod$varVC[[city_var]]
+
+u_city <- as.data.frame(mod$ranefMat[[city_var]]) %>%
+  tibble::rownames_to_column("CITY_NAME")
+
+cities <- u_city$CITY_NAME
+
+edu_levels <- levels(dat$EDU_GROUP)
+edu_ref <- edu_levels[1]
+
+#---------------------------------------------------------
+# 2) Helpers robustos
+#---------------------------------------------------------
+get_term <- function(a, b){
+  nm1 <- paste0(a, ":", b)
+  nm2 <- paste0(b, ":", a)
+  if (nm1 %in% colnames(V)) return(nm1)
+  if (nm2 %in% colnames(V)) return(nm2)
+  return(NA_character_)
+}
+
+vcov_lincomb <- function(terms){
+  terms <- terms[!is.na(terms)]
+  stopifnot(length(terms) >= 1)
+  stopifnot(all(terms %in% colnames(V)))
+  ones <- rep(1, length(terms))
+  as.numeric(t(ones) %*% V[terms, terms, drop = FALSE] %*% ones)
+}
+
+wald_df <- function(est, var){
+  se <- sqrt(var)
+  tibble(
+    est = est,
+    lwr = est - 1.96*se,
+    upr = est + 1.96*se
+  )
+}
+
+# Calcula est/var por ciudad para un "slope" con interacción por EDU
+make_city_edu <- function(main_term, pretty_attr, contraste_txt){
+  stopifnot(main_term %in% names(mod$coef))
+  stopifnot(main_term %in% colnames(G))  # debe existir slope aleatorio
+
+  term_edu <- function(e){
+    if (e == edu_ref) return(NA_character_)
+    get_term(main_term, paste0("EDU_GROUP", e))
+  }
+
+  out <- crossing(CITY_NAME = cities, EDU_GROUP = edu_levels) %>%
+    rowwise() %>%
+    mutate(
+      terms = list(c(main_term, term_edu(EDU_GROUP))),
+      beta_fix = sum(mod$coef[unlist(terms)[!is.na(unlist(terms))]]),
+      u_val = u_city[[main_term]][match(CITY_NAME, u_city$CITY_NAME)],
+      est_val = beta_fix + u_val,
+      var_val = vcov_lincomb(unlist(terms)) + as.numeric(G[main_term, main_term])
+    ) %>%
+    ungroup()
+
+  ci <- wald_df(out$est_val, out$var_val)
+
+  bind_cols(out, ci) %>%
+    transmute(
+      CITY_NAME,
+      Atributo  = pretty_attr,
+      Grupo     = "Nivel educativo",
+      Estrato   = EDU_GROUP,
+      Contraste = contraste_txt,
+      est, lwr, upr
+    )
+}
+
+# Calcula est/var global (u=0) para un "slope" con interacción por EDU
+make_global_edu <- function(main_term, pretty_attr, contraste_txt){
+  stopifnot(main_term %in% names(mod$coef))
+
+  term_edu <- function(e){
+    if (e == edu_ref) return(NA_character_)
+    get_term(main_term, paste0("EDU_GROUP", e))
+  }
+
+  out <- crossing(EDU_GROUP = edu_levels) %>%
+    rowwise() %>%
+    mutate(
+      terms = list(c(main_term, term_edu(EDU_GROUP))),
+      est_val = sum(mod$coef[unlist(terms)[!is.na(unlist(terms))]]),
+      var_val = vcov_lincomb(unlist(terms))
+    ) %>%
+    ungroup()
+
+  ci <- wald_df(out$est_val, out$var_val)
+
+  bind_cols(out, ci) %>%
+    transmute(
+      CITY_NAME = "Global (todas las ciudades)",
+      Atributo  = pretty_attr,
+      Grupo     = "Nivel educativo",
+      Estrato   = EDU_GROUP,
+      Contraste = contraste_txt,
+      est, lwr, upr
+    )
+}
+
+# Calcula por ciudad para término SIN interacción (solo main_term + random slope)
+make_city_simple <- function(main_term, pretty_attr, contraste_txt){
+  stopifnot(main_term %in% names(mod$coef))
+  stopifnot(main_term %in% colnames(G))
+
+  out <- u_city %>%
+    transmute(
+      CITY_NAME,
+      Atributo  = pretty_attr,
+      Grupo     = NA_character_,
+      Estrato   = NA_character_,
+      Contraste = contraste_txt,
+      est_val   = unname(mod$coef[main_term]) + .data[[main_term]],
+      var_val   = as.numeric(V[main_term, main_term]) + as.numeric(G[main_term, main_term])
+    )
+
+  ci <- wald_df(out$est_val, out$var_val)
+
+  bind_cols(out, ci) %>%
+    transmute(CITY_NAME, Atributo, Grupo, Estrato, Contraste, est, lwr, upr)
+}
+
+# Global simple (u=0)
+make_global_simple <- function(main_term, pretty_attr, contraste_txt){
+  stopifnot(main_term %in% names(mod$coef))
+
+  est_val <- unname(mod$coef[main_term])
+  var_val <- as.numeric(V[main_term, main_term])
+
+  ci <- wald_df(est_val, var_val)
+
+  tibble(
+    CITY_NAME = "Global (todas las ciudades)",
+    Atributo  = pretty_attr,
+    Grupo     = NA_character_,
+    Estrato   = NA_character_,
+    Contraste = contraste_txt,
+    est = ci$est, lwr = ci$lwr, upr = ci$upr
+  )
+}
+
+#=========================================================
+# 3) Construir tablas por exposición
+#=========================================================
+
+# INT_Z * EDU_GROUP
+df_INT_edu_city <- make_city_edu(
+  main_term = "INT_Z",
+  pretty_attr = "Densidad de intersecciones (n/km2)",
+  contraste_txt = "por 1 SD (Z por ciudad)"
+)
+pop_INT_edu <- make_global_edu(
+  main_term = "INT_Z",
+  pretty_attr = "Densidad de intersecciones (n/km2)",
+  contraste_txt = "por 1 SD (Z por ciudad)"
+)
+
+# GREEN_Z * EDU_GROUP (solo lineal)
+df_GREEN_edu_city <- make_city_edu(
+  main_term = "GREEN_Z",
+  pretty_attr = "Zonas verdes (%)",
+  contraste_txt = "por 1 SD (Z por ciudad)"
+)
+pop_GREEN_edu <- make_global_edu(
+  main_term = "GREEN_Z",
+  pretty_attr = "Zonas verdes (%)",
+  contraste_txt = "por 1 SD (Z por ciudad)"
+)
+
+# STOPS_Q4_NUM (sin interacción)
+df_STOPS_city <- make_city_simple(
+  main_term = "STOPS_Q4_NUM",
+  pretty_attr = "Distancia a paraderos (m)",
+  contraste_txt = "+1 cuartil (tendencia lineal; ref=Q1)"
+)
+pop_STOPS <- make_global_simple(
+  main_term = "STOPS_Q4_NUM",
+  pretty_attr = "Distancia a paraderos (m)",
+  contraste_txt = "+1 cuartil (tendencia lineal; ref=Q1)"
+)
+
+# DENS_HEALTH_LOG_ZC * EDU_GROUP
+df_DH_edu_city <- make_city_edu(
+  main_term = "DENS_HEALTH_LOG_ZC",
+  pretty_attr = "Densidad saludable (log, Z centrado)",
+  contraste_txt = "por 1 SD (Z centrado)"
+)
+pop_DH_edu <- make_global_edu(
+  main_term = "DENS_HEALTH_LOG_ZC",
+  pretty_attr = "Densidad saludable (log, Z centrado)",
+  contraste_txt = "por 1 SD (Z centrado)"
+)
+
+# DENS_UNHEALTH_LOG_ZC * EDU_GROUP
+df_DU_edu_city <- make_city_edu(
+  main_term = "DENS_UNHEALTH_LOG_ZC",
+  pretty_attr = "Densidad no saludable (log, Z centrado)",
+  contraste_txt = "por 1 SD (Z centrado)"
+)
+pop_DU_edu <- make_global_edu(
+  main_term = "DENS_UNHEALTH_LOG_ZC",
+  pretty_attr = "Densidad no saludable (log, Z centrado)",
+  contraste_txt = "por 1 SD (Z centrado)"
+)
+
+#=========================================================
+# 4) Tabla final + orden correcto de educación
+#=========================================================
+
+tabla_MOD6 <- bind_rows(
+  df_INT_edu_city, pop_INT_edu,
+  df_GREEN_edu_city, pop_GREEN_edu,
+  df_STOPS_city, pop_STOPS,
+  df_DH_edu_city, pop_DH_edu,
+  df_DU_edu_city, pop_DU_edu
+) %>%
+  mutate(
+    # fuerza orden del factor educativo como en tus levels()
+    Estrato = ifelse(Grupo == "Nivel educativo", as.character(Estrato), Estrato),
+    Estrato = ifelse(Grupo == "Nivel educativo",
+                     factor(Estrato, levels = edu_levels) %>% as.character(),
+                     Estrato),
+
+    Efecto  = sprintf("%.3f", est),
+    `IC 95%` = sprintf("[%.3f; %.3f]", lwr, upr)
+  ) %>%
+  arrange(CITY_NAME, Atributo, Grupo, Estrato) %>%
+  select(CITY_NAME, Atributo, Grupo, Estrato, Contraste, Efecto, `IC 95%`)
+
+tabla_MOD6
+```
+
+
+# Gráficas
+
+```{r}
+#=========================================================
+# WC predicho vs Densidad de intersecciones (INT_Z)
+# + Tabla inferior con coeficientes por ciudad
+# Modelo: MOD6 (WeMix)
+#=========================================================
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(grid)
+library(gridExtra)
+library(cowplot)
+
+mod <- MOD6
+
+#---------------------------------------------------------
+# 1) Coeficientes fijos
+#---------------------------------------------------------
+b0    <- unname(mod$coef["(Intercept)"])
+b_INT <- unname(mod$coef["INT_Z"])
+
+#---------------------------------------------------------
+# 2) Efectos aleatorios por ciudad
+#---------------------------------------------------------
+u_city <- mod$ranefMat$CITY_NAME %>%
+  as.data.frame() %>%
+  rownames_to_column("CITY_NAME") %>%
+  select(CITY_NAME, `(Intercept)`, INT_Z)
+
+#---------------------------------------------------------
+# 3) Grid de predicción
+#---------------------------------------------------------
+grid_INT <- seq(-2.5, 2.5, length.out = 200)
+
+pred_grid <- expand_grid(
+  CITY_NAME = u_city$CITY_NAME,
+  INT_Z = grid_INT
+) %>%
+  left_join(u_city, by = "CITY_NAME") %>%
+  mutate(
+    WC_pred = (b0 + `(Intercept)`) +
+      (b_INT + INT_Z.y) * INT_Z.x
+  ) %>%
+  rename(INT_Z = INT_Z.x)
+
+#---------------------------------------------------------
+# 4) Nombres y orden de ciudades
+#---------------------------------------------------------
+city_levels <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA")
+city_labels <- c("Bogotá","Medellín","Cali","Barranquilla","Bucaramanga")
+
+pred_grid <- pred_grid %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels)
+  )
+
+#---------------------------------------------------------
+# 5) Paleta Nature / Lancet
+#---------------------------------------------------------
+city_colors <- c(
+  "Bogotá"       = "#0072B2",
+  "Medellín"     = "#009E73",
+  "Cali"         = "#D55E00",
+  "Barranquilla" = "#CC79A7",
+  "Bucaramanga"  = "#E69F00"
+)
+
+#---------------------------------------------------------
+# 6) Figura principal (tema publicable, ejes visibles)
+#---------------------------------------------------------
+p_main <- ggplot(pred_grid,
+                 aes(x = INT_Z, y = WC_pred, color = Ciudad)) +
+  geom_line(linewidth = 1.2, lineend = "round") +
+  geom_vline(
+  xintercept = 0,
+  linetype   = "dashed",
+  linewidth  = 0.6,
+  color      = "grey45"
+) +
+  scale_color_manual(values = city_colors) +
+  scale_x_continuous(
+    name   = "Densidad de intersecciones (Z por ciudad)",
+    breaks = seq(-2, 2, 1)
+  ) +
+  scale_y_continuous(
+    name   = "PA predicho (cm)",
+    breaks = pretty_breaks(5)
+  ) +
+  coord_cartesian(xlim = c(-2.5, 2.5), ylim = c(60, 180)) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+    axis.line = element_line(color = "black", linewidth = 0.6),
+    axis.title = element_text(face = "bold"),
+    axis.text  = element_text(color = "black"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(color = "black"),
+    plot.margin = margin(8, 10, 2, 10)
+  )
+
+#---------------------------------------------------------
+# 7) Tabla inferior con coeficientes por ciudad
+#---------------------------------------------------------
+beta_tbl <- u_city %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels),
+    beta_val = b_INT + INT_Z,
+    beta_lab = sprintf("β = %.2f", beta_val)
+  ) %>%
+  arrange(Ciudad)
+
+tab_mat <- rbind(
+  c("Ciudad",      as.character(beta_tbl$Ciudad)),
+  c("Coeficiente", as.character(beta_tbl$beta_lab))
+)
+
+tbl_grob <- tableGrob(
+  tab_mat,
+  rows = NULL,
+  theme = ttheme_default(
+    base_size = 11,
+    core = list(
+      fg_params = list(col = "black"),
+      bg_params = list(fill = NA),
+      padding = unit(c(4, 10), "pt")
+    )
+  )
+)
+
+#---------------------------------------------------------
+# 8) FIX DEFINITIVO: evitar recorte de "Coeficiente"
+#---------------------------------------------------------
+# Ensanchar primera columna
+tbl_grob$widths[1] <- unit(2.6, "cm")
+
+# Aumentar altura de filas
+tbl_grob$heights <- tbl_grob$heights + unit(2, "mm")
+
+# Alinear texto de la primera columna a la izquierda
+for (i in 1:2) {
+  idx <- which(tbl_grob$layout$t == i &
+                 tbl_grob$layout$l == 1 &
+                 tbl_grob$layout$name == "core-fg")
+  if (length(idx) == 1) {
+    tbl_grob$grobs[[idx]]$hjust <- 0
+    tbl_grob$grobs[[idx]]$x <- unit(2, "mm")
+    tbl_grob$grobs[[idx]]$gp <- gpar(fontface = "bold", col = "black")
+  }
+}
+
+# Bordes finos gris claro
+tbl_grob$grobs <- lapply(tbl_grob$grobs, function(g) {
+  if (inherits(g, "rect")) {
+    g$gp <- gpar(col = "grey65", fill = NA, linewidth = 0.6)
+  }
+  g
+})
+
+#---------------------------------------------------------
+# 9) Combinar figura + tabla
+#---------------------------------------------------------
+final_plot <- plot_grid(
+  p_main,
+  tbl_grob,
+  ncol = 1,
+  rel_heights = c(3.6, 1.0)
+)
+
+final_plot
+
+#---------------------------------------------------------
+# 10) Exportación recomendada (líneas suaves, no pixeladas)
+#---------------------------------------------------------
+library(grid)
+
+png(
+  filename = "Figura_INT_WC_por_ciudad_MOD6FINAL.png",
+  width  = 7.5,
+  height = 6.5,
+  units  = "in",
+  res    = 600,
+  type = "cairo"   # si está disponible
+)
+
+grid.newpage()
+grid.draw(final_plot)
+
+dev.off()
+
+```
+
+
+```{r}
+#=========================================================
+# WC predicho vs Distancia a paraderos (STOPS_Q4_NUM)
+# Modelo ordinal lineal (tendencia) + intercepto y slope aleatorio por ciudad
+# Layout idéntico al de intersecciones + tabla inferior con β por ciudad
+# Modelo: MOD6 (WeMix)
+#=========================================================
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(ragg)
+
+mod <- MOD6
+
+#---------------------------------------------------------
+# 1) Coeficientes fijos
+#---------------------------------------------------------
+b0      <- unname(mod$coef["(Intercept)"])
+b_STOPS <- unname(mod$coef["STOPS_Q4_NUM"])
+
+#---------------------------------------------------------
+# 2) Efectos aleatorios por ciudad (BLUPs)
+#---------------------------------------------------------
+u_city <- mod$ranefMat$CITY_NAME %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("CITY_NAME") %>%
+  select(CITY_NAME, `(Intercept)`, STOPS_Q4_NUM)
+
+#---------------------------------------------------------
+# 3) Grid de STOPS_Q4_NUM (ordinal 1..4)
+#    - usamos escala real del modelo: 1 a 4
+#---------------------------------------------------------
+grid_STOPS <- seq(1, 4, length.out = 200)
+
+pred_grid <- expand_grid(
+  CITY_NAME = u_city$CITY_NAME,
+  STOPS_Q4_NUM = grid_STOPS
+) %>%
+  left_join(u_city, by = "CITY_NAME") %>%
+  mutate(
+    WC_pred = (b0 + `(Intercept)`) +
+      (b_STOPS + STOPS_Q4_NUM.y) * STOPS_Q4_NUM.x
+  ) %>%
+  rename(
+    STOPS_RE    = STOPS_Q4_NUM.y,
+    STOPS_Q4_NUM = STOPS_Q4_NUM.x
+  )
+
+#---------------------------------------------------------
+# 4) Nombres/orden ciudades
+#---------------------------------------------------------
+city_levels <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA")
+city_labels <- c("Bogotá","Medellín","Cali","Barranquilla","Bucaramanga")
+
+pred_grid <- pred_grid %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels)
+  )
+
+#---------------------------------------------------------
+# 5) Paleta Nature/Lancet
+#---------------------------------------------------------
+city_colors <- c(
+  "Bogotá"       = "#0072B2",
+  "Medellín"     = "#009E73",
+  "Cali"         = "#D55E00",
+  "Barranquilla" = "#CC79A7",
+  "Bucaramanga"  = "#E69F00"
+)
+
+#---------------------------------------------------------
+# 6) Figura principal (líneas por ciudad)
+#---------------------------------------------------------
+p_main <- ggplot(pred_grid, aes(x = STOPS_Q4_NUM, y = WC_pred, color = Ciudad)) +
+  geom_line(linewidth = 1.2, lineend = "round") +
+  scale_color_manual(values = city_colors) +
+  scale_x_continuous(
+    name   = "Distancia a paraderos (cuartiles; tendencia lineal)",
+    breaks = 1:4,
+    labels = c("Q1","Q2","Q3","Q4")
+  ) +
+  scale_y_continuous(
+    name   = "PA predicho (cm)",
+    breaks = pretty_breaks(5)
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+    axis.line = element_line(color = "black", linewidth = 0.6),
+    axis.title = element_text(face = "bold"),
+    axis.text  = element_text(color = "black"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text  = element_text(color = "black"),
+    plot.margin  = margin(8, 10, 2, 10)
+  )
+
+#---------------------------------------------------------
+# 7) Tabla inferior con β por ciudad
+#    β_city = β_fix + u_slope_city  (por +1 cuartil)
+#    (opcional) β(Q4–Q1) = 3*β_city
+#---------------------------------------------------------
+beta_tbl <- u_city %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels),
+    beta_1Q   = b_STOPS + STOPS_Q4_NUM,         # por +1 cuartil
+    beta_Q4Q1 = 3 * (b_STOPS + STOPS_Q4_NUM),   # acumulado Q4–Q1
+    beta_lab  = sprintf("β = %.2f", beta_1Q)    # usa +1Q en la tabla
+    # Si prefieres Q4–Q1, reemplaza la línea anterior por:
+    # beta_lab = sprintf("β(Q4–Q1) = %.2f", beta_Q4Q1)
+  ) %>%
+  arrange(Ciudad)
+
+tab_mat <- rbind(
+  c("Ciudad",      as.character(beta_tbl$Ciudad)),
+  c("Coeficiente", as.character(beta_tbl$beta_lab))
+)
+
+tbl_grob <- tableGrob(
+  tab_mat,
+  rows = NULL,
+  theme = ttheme_default(
+    base_size = 11,
+    core = list(
+      fg_params = list(col = "black"),
+      bg_params = list(fill = NA),
+      padding   = unit(c(4, 10), "pt")
+    )
+  )
+)
+
+# Fix ancho y estilo (evitar recortes)
+tbl_grob$widths[1] <- unit(2.6, "cm")
+tbl_grob$heights   <- tbl_grob$heights + unit(2, "mm")
+
+for (i in 1:2) {
+  idx <- which(tbl_grob$layout$t == i &
+                 tbl_grob$layout$l == 1 &
+                 tbl_grob$layout$name == "core-fg")
+  if (length(idx) == 1) {
+    tbl_grob$grobs[[idx]]$hjust <- 0
+    tbl_grob$grobs[[idx]]$x     <- unit(2, "mm")
+    tbl_grob$grobs[[idx]]$gp    <- gpar(fontface = "bold", col = "black")
+  }
+}
+
+# Bordes finos gris claro
+tbl_grob$grobs <- lapply(tbl_grob$grobs, function(g) {
+  if (inherits(g, "rect")) {
+    g$gp <- gpar(col = "grey65", fill = NA, linewidth = 0.6)
+  }
+  g
+})
+
+#---------------------------------------------------------
+# 8) Combinar figura + tabla
+#---------------------------------------------------------
+final_plot_STOPS <- plot_grid(
+  p_main,
+  tbl_grob,
+  ncol = 1,
+  rel_heights = c(3.6, 1.0)
+)
+
+final_plot_STOPS
+
+#---------------------------------------------------------
+# 9) Exportar PNG (recomendado; antialiasing)
+#---------------------------------------------------------
+ragg::agg_png(
+  filename = "Figura_STOPS_WC_por_ciudad_MOD6FINAL.png",
+  width  = 7.5,
+  height = 6.5,
+  units  = "in",
+  res    = 600
+)
+grid::grid.newpage()
+grid::grid.draw(final_plot_STOPS)
+dev.off()
+
+```
+
+
+```{r}
+#=========================================================
+# WC predicho vs Zonas verdes (GREEN_Z)  [SIN polinomios]
+# + intercepto aleatorio y slope lineal aleatorio por ciudad
+# + tabla inferior con β_lineal por ciudad (β_GREEN + u_GREEN)
+# Modelo: MOD6 (WeMix)
+# Layout idéntico al de intersecciones/paraderos
+#=========================================================
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(ragg)
+
+mod <- MOD6
+
+#---------------------------------------------------------
+# 1) Coeficientes fijos
+#---------------------------------------------------------
+b0    <- unname(mod$coef["(Intercept)"])
+b_G1  <- unname(mod$coef["GREEN_Z"])
+
+#---------------------------------------------------------
+# 2) Efectos aleatorios por ciudad (intercepto + slope GREEN_Z)
+#---------------------------------------------------------
+u_city <- mod$ranefMat$CITY_NAME %>%
+  as.data.frame() %>%
+  rownames_to_column("CITY_NAME") %>%
+  select(CITY_NAME, `(Intercept)`, GREEN_Z)
+
+#---------------------------------------------------------
+# 3) Grid de GREEN_Z
+#---------------------------------------------------------
+grid_GREEN <- seq(-2.5, 2.5, length.out = 200)
+
+pred_green <- expand_grid(
+  CITY_NAME = u_city$CITY_NAME,
+  GREEN_Z   = grid_GREEN
+) %>%
+  left_join(u_city, by = "CITY_NAME") %>%
+  mutate(
+    WC_pred = (b0 + `(Intercept)`) +
+      (b_G1 + GREEN_Z.y) * GREEN_Z.x
+  ) %>%
+  rename(
+    GREEN_RE = GREEN_Z.y,
+    GREEN_Z  = GREEN_Z.x
+  )
+
+#---------------------------------------------------------
+# 4) Orden y labels de ciudad
+#---------------------------------------------------------
+city_levels <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA")
+city_labels <- c("Bogotá","Medellín","Cali","Barranquilla","Bucaramanga")
+
+pred_green <- pred_green %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels)
+  )
+
+#---------------------------------------------------------
+# 5) Paleta Nature/Lancet
+#---------------------------------------------------------
+city_colors <- c(
+  "Bogotá"       = "#0072B2",
+  "Medellín"     = "#009E73",
+  "Cali"         = "#D55E00",
+  "Barranquilla" = "#CC79A7",
+  "Bucaramanga"  = "#E69F00"
+)
+
+#---------------------------------------------------------
+# 6) Figura principal
+#---------------------------------------------------------
+p_green <- ggplot(pred_green, aes(x = GREEN_Z, y = WC_pred, color = Ciudad)) +
+  geom_line(linewidth = 1.2, lineend = "round") +
+  geom_vline(
+    xintercept = 0,
+    linetype   = "dashed",
+    linewidth  = 0.6,
+    color      = "grey45"
+  ) +
+  scale_color_manual(values = city_colors) +
+  scale_x_continuous(
+    name   = "Porcentaje de zonas verdes (Z por ciudad)",
+    breaks = seq(-2, 2, 1)
+  ) +
+  scale_y_continuous(
+    name   = "PA predicho (cm)",
+    breaks = pretty_breaks(5)
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+    axis.line = element_line(color = "black", linewidth = 0.6),
+    axis.title = element_text(face = "bold"),
+    axis.text  = element_text(color = "black"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text  = element_text(color = "black"),
+    plot.margin  = margin(8, 10, 2, 10)
+  )
+
+#---------------------------------------------------------
+# 7) Tabla inferior: β lineal por ciudad (por 1 SD en GREEN_Z)
+#    β_lineal_ciudad = b_G1 + u_GREENZ_city
+#---------------------------------------------------------
+beta_tbl <- u_city %>%
+  mutate(
+    Ciudad   = factor(CITY_NAME, levels = city_levels, labels = city_labels),
+    beta_1   = b_G1 + GREEN_Z,
+    beta_lab = sprintf("β = %.2f", beta_1)
+  ) %>%
+  arrange(Ciudad)
+
+tab_mat <- rbind(
+  c("Ciudad",      as.character(beta_tbl$Ciudad)),
+  c("Coeficiente", as.character(beta_tbl$beta_lab))
+)
+
+tbl_grob <- tableGrob(
+  tab_mat,
+  rows = NULL,
+  theme = ttheme_default(
+    base_size = 11,
+    core = list(
+      fg_params = list(col = "black"),
+      bg_params = list(fill = NA),
+      padding   = unit(c(4, 10), "pt")
+    )
+  )
+)
+
+# Ajustes anti-recorte
+tbl_grob$widths[1] <- unit(2.8, "cm")
+tbl_grob$heights   <- tbl_grob$heights + unit(2, "mm")
+
+# Primera columna en negrilla y alineada a la izquierda
+for (i in 1:2) {
+  idx <- which(tbl_grob$layout$t == i &
+                 tbl_grob$layout$l == 1 &
+                 tbl_grob$layout$name == "core-fg")
+  if (length(idx) == 1) {
+    tbl_grob$grobs[[idx]]$hjust <- 0
+    tbl_grob$grobs[[idx]]$x     <- unit(2, "mm")
+    tbl_grob$grobs[[idx]]$gp    <- gpar(fontface = "bold", col = "black")
+  }
+}
+
+# Bordes suaves
+tbl_grob$grobs <- lapply(tbl_grob$grobs, function(g) {
+  if (inherits(g, "rect")) {
+    g$gp <- gpar(col = "grey65", fill = NA, linewidth = 0.6)
+  }
+  g
+})
+
+#---------------------------------------------------------
+# 8) Combinar figura + tabla
+#---------------------------------------------------------
+final_plot_GREEN <- plot_grid(
+  p_green,
+  tbl_grob,
+  ncol = 1,
+  rel_heights = c(3.6, 1.0)
+)
+
+final_plot_GREEN
+
+#---------------------------------------------------------
+# 9) Exportar PNG (Word-friendly, líneas suaves)
+#---------------------------------------------------------
+ragg::agg_png(
+  filename = "Figura_GREEN_WC_por_ciudad_MOD6FINAL.png",
+  width  = 7.5,
+  height = 6.5,
+  units  = "in",
+  res    = 600
+)
+grid::grid.newpage()
+grid::grid.draw(final_plot_GREEN)
+dev.off()
+
+```
+
+
+
+```{r}
+#=========================================================
+# WC predicho vs Densidad de supermercados (HEALTH)
+# + intercepto aleatorio y slope aleatorio por ciudad
+# + tabla inferior con β ciudad-específico
+# Modelo: MOD6 (WeMix)
+# Layout idéntico a INT / GREEN / STOPS
+#=========================================================
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(ragg)
+
+mod <- MOD6
+
+#---------------------------------------------------------
+# 1) Coeficientes fijos
+#---------------------------------------------------------
+b0       <- unname(mod$coef["(Intercept)"])
+b_HEALTH <- unname(mod$coef["DENS_HEALTH_LOG_ZC"])
+
+#---------------------------------------------------------
+# 2) Efectos aleatorios por ciudad
+#---------------------------------------------------------
+u_city <- mod$ranefMat$CITY_NAME %>%
+  as.data.frame() %>%
+  rownames_to_column("CITY_NAME") %>%
+  select(CITY_NAME, `(Intercept)`, DENS_HEALTH_LOG_ZC)
+
+#---------------------------------------------------------
+# 3) Grid de HEALTH (Z por ciudad)
+#---------------------------------------------------------
+grid_HEALTH <- seq(-2.5, 2.5, length.out = 200)
+
+pred_health <- expand_grid(
+  CITY_NAME = u_city$CITY_NAME,
+  HEALTH_Z  = grid_HEALTH
+) %>%
+  left_join(u_city, by = "CITY_NAME") %>%
+  mutate(
+    WC_pred = (b0 + `(Intercept)`) +
+      (b_HEALTH + DENS_HEALTH_LOG_ZC) * HEALTH_Z
+  )
+
+#---------------------------------------------------------
+# 4) Orden y labels de ciudad
+#---------------------------------------------------------
+city_levels <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA")
+city_labels <- c("Bogotá","Medellín","Cali","Barranquilla","Bucaramanga")
+
+pred_health <- pred_health %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels)
+  )
+
+#---------------------------------------------------------
+# 5) Paleta Nature/Lancet
+#---------------------------------------------------------
+city_colors <- c(
+  "Bogotá"       = "#0072B2",
+  "Medellín"     = "#009E73",
+  "Cali"         = "#D55E00",
+  "Barranquilla" = "#CC79A7",
+  "Bucaramanga"  = "#E69F00"
+)
+
+#---------------------------------------------------------
+# 6) Figura principal
+#---------------------------------------------------------
+p_health <- ggplot(pred_health,
+                   aes(x = HEALTH_Z, y = WC_pred, color = Ciudad)) +
+  geom_line(linewidth = 1.2, lineend = "round") +
+  geom_vline(
+    xintercept = 0,
+    linetype   = "dashed",
+    linewidth  = 0.6,
+    color      = "grey45"
+  ) +
+  scale_color_manual(values = city_colors) +
+  scale_x_continuous(
+    name   = "Densidad de supermercados (Z por ciudad)",
+    breaks = seq(-2, 2, 1)
+  ) +
+  scale_y_continuous(
+    name   = "PA predicho (cm)",
+    breaks = pretty_breaks(5)
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+    axis.line          = element_line(color = "black", linewidth = 0.6),
+    axis.title         = element_text(face = "bold"),
+    axis.text          = element_text(color = "black"),
+    legend.position    = "bottom",
+    legend.title       = element_blank(),
+    legend.text        = element_text(color = "black"),
+    plot.margin        = margin(8, 10, 2, 10)
+  )
+
+#---------------------------------------------------------
+# 7) Tabla inferior: β por ciudad
+#    β_city = β_fix + u_slope_city
+#---------------------------------------------------------
+beta_tbl <- u_city %>%
+  mutate(
+    Ciudad    = factor(CITY_NAME, levels = city_levels, labels = city_labels),
+    beta_city = b_HEALTH + DENS_HEALTH_LOG_ZC,
+    beta_lab  = sprintf("β = %.2f", beta_city)
+  ) %>%
+  arrange(Ciudad)
+
+tab_mat <- rbind(
+  c("Ciudad",      as.character(beta_tbl$Ciudad)),
+  c("Coeficiente", as.character(beta_tbl$beta_lab))
+)
+
+tbl_grob <- tableGrob(
+  tab_mat,
+  rows = NULL,
+  theme = ttheme_default(
+    base_size = 11,
+    core = list(
+      fg_params = list(col = "black"),
+      bg_params = list(fill = NA),
+      padding   = unit(c(4, 10), "pt")
+    )
+  )
+)
+
+# Ajustes anti-recorte
+tbl_grob$widths[1] <- unit(2.8, "cm")
+tbl_grob$heights   <- tbl_grob$heights + unit(2, "mm")
+
+# Primera columna alineada a la izquierda y en negrilla
+for (i in 1:2) {
+  idx <- which(tbl_grob$layout$t == i &
+                 tbl_grob$layout$l == 1 &
+                 tbl_grob$layout$name == "core-fg")
+  if (length(idx) == 1) {
+    tbl_grob$grobs[[idx]]$hjust <- 0
+    tbl_grob$grobs[[idx]]$x     <- unit(2, "mm")
+    tbl_grob$grobs[[idx]]$gp    <- gpar(fontface = "bold", col = "black")
+  }
+}
+
+# Bordes suaves
+tbl_grob$grobs <- lapply(tbl_grob$grobs, function(g) {
+  if (inherits(g, "rect")) {
+    g$gp <- gpar(col = "grey65", fill = NA, linewidth = 0.6)
+  }
+  g
+})
+
+#---------------------------------------------------------
+# 8) Combinar figura + tabla
+#---------------------------------------------------------
+final_plot_HEALTH <- plot_grid(
+  p_health,
+  tbl_grob,
+  ncol = 1,
+  rel_heights = c(3.6, 1.0)
+)
+
+final_plot_HEALTH
+
+#---------------------------------------------------------
+# 9) Exportar PNG (Word-friendly, líneas suaves)
+#---------------------------------------------------------
+ragg::agg_png(
+  filename = "Figura_HEALTH_WC_por_ciudad_MOD6FINAL.png",
+  width  = 7.5,
+  height = 6.5,
+  units  = "in",
+  res    = 600
+)
+grid::grid.newpage()
+grid::grid.draw(final_plot_HEALTH)
+dev.off()
+
+```
+
+
+```{r}
+#=========================================================
+# WC predicho vs Densidad de restaurantes (UNHEALTH)
+# + intercepto aleatorio y slope aleatorio por ciudad
+# + tabla inferior con β ciudad-específico
+# Modelo: MOD6 (WeMix)
+# Layout idéntico a HEALTH
+#=========================================================
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(ragg)
+
+mod <- MOD6
+
+#---------------------------------------------------------
+# 1) Coeficientes fijos
+#---------------------------------------------------------
+b0         <- unname(mod$coef["(Intercept)"])
+b_UNHEALTH <- unname(mod$coef["DENS_UNHEALTH_LOG_ZC"])
+
+#---------------------------------------------------------
+# 2) Efectos aleatorios por ciudad (intercepto + slope UNHEALTH)
+#---------------------------------------------------------
+u_city <- mod$ranefMat$CITY_NAME %>%
+  as.data.frame() %>%
+  rownames_to_column("CITY_NAME") %>%
+  select(CITY_NAME, `(Intercept)`, DENS_UNHEALTH_LOG_ZC)
+
+#---------------------------------------------------------
+# 3) Grid de UNHEALTH (Z por ciudad)
+#---------------------------------------------------------
+grid_UNHEALTH <- seq(-2.5, 2.5, length.out = 200)
+
+pred_unhealth <- expand_grid(
+  CITY_NAME  = u_city$CITY_NAME,
+  UNHEALTH_Z = grid_UNHEALTH
+) %>%
+  left_join(u_city, by = "CITY_NAME") %>%
+  mutate(
+    WC_pred = (b0 + `(Intercept)`) +
+      (b_UNHEALTH + DENS_UNHEALTH_LOG_ZC) * UNHEALTH_Z
+  )
+
+#---------------------------------------------------------
+# 4) Orden y labels de ciudad
+#---------------------------------------------------------
+city_levels <- c("BOGOTA","MEDELLIN","CALI","BARRANQUILLA","BUCARAMANGA")
+city_labels <- c("Bogotá","Medellín","Cali","Barranquilla","Bucaramanga")
+
+pred_unhealth <- pred_unhealth %>%
+  mutate(
+    Ciudad = factor(CITY_NAME, levels = city_levels, labels = city_labels)
+  )
+
+#---------------------------------------------------------
+# 5) Paleta Nature/Lancet
+#---------------------------------------------------------
+city_colors <- c(
+  "Bogotá"       = "#0072B2",
+  "Medellín"     = "#009E73",
+  "Cali"         = "#D55E00",
+  "Barranquilla" = "#CC79A7",
+  "Bucaramanga"  = "#E69F00"
+)
+
+#---------------------------------------------------------
+# 6) Figura principal
+#---------------------------------------------------------
+p_unhealth <- ggplot(pred_unhealth,
+                     aes(x = UNHEALTH_Z, y = WC_pred, color = Ciudad)) +
+  geom_line(linewidth = 1.2, lineend = "round") +
+  geom_vline(
+    xintercept = 0,
+    linetype   = "dashed",
+    linewidth  = 0.6,
+    color      = "grey45"
+  ) +
+  scale_color_manual(values = city_colors) +
+  scale_x_continuous(
+    name   = "Densidad de restaurantes (Z por ciudad)",
+    breaks = seq(-2, 2, 1)
+  ) +
+  scale_y_continuous(
+    name   = "PA predicho (cm)",
+    breaks = pretty_breaks(5)
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+    axis.line          = element_line(color = "black", linewidth = 0.6),
+    axis.title         = element_text(face = "bold"),
+    axis.text          = element_text(color = "black"),
+    legend.position    = "bottom",
+    legend.title       = element_blank(),
+    legend.text        = element_text(color = "black"),
+    plot.margin        = margin(8, 10, 2, 10)
+  )
+
+#---------------------------------------------------------
+# 7) Tabla inferior: β por ciudad
+#    β_ciudad = β_fijo + u_slope_ciudad
+#---------------------------------------------------------
+beta_tbl <- u_city %>%
+  mutate(
+    Ciudad    = factor(CITY_NAME, levels = city_levels, labels = city_labels),
+    beta_city = b_UNHEALTH + DENS_UNHEALTH_LOG_ZC,
+    beta_lab  = sprintf("β = %.2f", beta_city)
+  ) %>%
+  arrange(Ciudad)
+
+tab_mat <- rbind(
+  c("Ciudad",      as.character(beta_tbl$Ciudad)),
+  c("Coeficiente", as.character(beta_tbl$beta_lab))
+)
+
+tbl_grob <- tableGrob(
+  tab_mat,
+  rows = NULL,
+  theme = ttheme_default(
+    base_size = 11,
+    core = list(
+      fg_params = list(col = "black"),
+      bg_params = list(fill = NA),
+      padding   = unit(c(4, 10), "pt")
+    )
+  )
+)
+
+# Evitar recortes en "Coeficiente"
+tbl_grob$widths[1] <- unit(2.8, "cm")
+tbl_grob$heights   <- tbl_grob$heights + unit(2, "mm")
+
+# Primera columna alineada a la izquierda y en negrilla
+for (i in 1:2) {
+  idx <- which(tbl_grob$layout$t == i &
+                 tbl_grob$layout$l == 1 &
+                 tbl_grob$layout$name == "core-fg")
+  if (length(idx) == 1) {
+    tbl_grob$grobs[[idx]]$hjust <- 0
+    tbl_grob$grobs[[idx]]$x     <- unit(2, "mm")
+    tbl_grob$grobs[[idx]]$gp    <- gpar(fontface = "bold", col = "black")
+  }
+}
+
+# Bordes suaves
+tbl_grob$grobs <- lapply(tbl_grob$grobs, function(g) {
+  if (inherits(g, "rect")) {
+    g$gp <- gpar(col = "grey65", fill = NA, linewidth = 0.6)
+  }
+  g
+})
+
+#---------------------------------------------------------
+# 8) Combinar figura + tabla
+#---------------------------------------------------------
+final_plot_UNHEALTH <- plot_grid(
+  p_unhealth,
+  tbl_grob,
+  ncol = 1,
+  rel_heights = c(3.6, 1.0)
+)
+
+final_plot_UNHEALTH
+
+#---------------------------------------------------------
+# 9) Exportar PNG (Word-friendly, líneas suaves)
+#---------------------------------------------------------
+ragg::agg_png(
+  filename = "Figura_UNHEALTH_WC_por_ciudad_MOD6FINAL.png",
+  width  = 7.5,
+  height = 6.5,
+  units  = "in",
+  res    = 600
+)
+grid::grid.newpage()
+grid::grid.draw(final_plot_UNHEALTH)
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

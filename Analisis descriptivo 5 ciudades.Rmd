@@ -1,0 +1,1462 @@
+---
+title: "Analisis descriptivo 5 ciudades"
+author:
+- "Sebastian A Gutierrez-Romero (estudiante)"
+- Magda Cepeda (tutora)
+- Martín Rondon (tutor)
+date: "2025-12-27"
+output:
+  word_document: default
+  html_document: default
+subtitle: Análisis multinivel de la relación entre AFC residencial e IMC y perímetro
+  abdominal en cinco ciudades de Colombia
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.path = "figs/",
+  dev = "ragg_png",
+  dpi = 300,
+  message = FALSE,   # oculta mensajes
+  warning = FALSE    # oculta warnings
+)
+if (!dir.exists("figs")) dir.create("figs", recursive = TRUE)
+```
+
+
+```{r include=FALSE}
+library(readxl)
+library(dplyr)
+library(survey)
+library(moments)
+library(gtsummary)
+```
+
+
+## 1. Cargar bases de datos y especificar clase de las variables
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+BOGOTA <- read_excel("COPEN_BOGOTA_DATA_FINAL.xlsx")
+BARRANQUILLA <- read_excel("COPEN_BARRANQUILLA_DATA_FINAL.xlsx")
+MEDELLIN <- read_excel("COPEN_MEDELLIN_DATA_FINAL.xlsx")
+CALI <- read_excel("COPEN_CALI_DATA_FINAL.xlsx")
+BUCARAMANGA <- read_excel("COPEN_BUCARAMANGA_DATA_FINAL.xlsx")
+
+# Creo los grupos de variables
+
+vars_character <- c(
+  "ID", "ID_SECTOR", "ID_SECTION", "ID_MZN", "ID_SUBURB",
+  "SUBURB_NAME", "BUFFER_ID50", "BUFFER_ID60", "BUFFER_ID70",
+  "BUFFER_ID80", "BUFFER_ID90", "BUFFER_ID95",
+  "COUNTRY", "CITY_CODE", "ADDRESS_1", "SUBURB",
+  "ADDRESS_2", "FULL_ADDRESS", "RECORD"
+)
+
+vars_factor <- c(
+  "CITY_NAME", "SEX", "SOC_ECON_LEVEL", "JOB",
+  "EDU_LEVEL", "MARITAL_STATUS",
+  "PREGNANCY", "DIABETES_PREV"
+)
+
+vars_numeric <- c(
+  "EXP_FACTOR", "LATITUDE", "LONGITUDE", "AGE",
+  "HEIGHT", "WEIGHT", "WAIST_CIRCUNF",
+  "AREA_KM2", "INT_TOPOL_BY_KM2", "INT_WALK_BY_KM2",
+  "DIST_STOPS_MIN", "DIST_STOPS_MAX", "DIST_STOPS_MEDIAN",
+  "DIST_STOPS_Q1", "DIST_STOPS_Q3", "DIST_STOPS_IQR",
+  "DIST_STOPS_MEAN", "DIST_STOPS_STDEV",
+  "NDVI_MEAN", "NDVI_MEDIAN", "NDVI_STDEV",
+  "NDVI_MIN", "NDVI_MAX", "NDVI_VAR",
+  "GREEN_PERC", "GREEN_AREA_M2",
+  "DENS_SUPERMARKET", "DENS_GREENGROCER",
+  "DENS_MARKETPLACE", "DENS_HEALTH_MARKET",
+  "DENS_FAST_TOTAL", "DENS_BAKERY_TOTAL",
+  "DENS_UNHEALTH_MARKET",
+  "SURVEY_LONG", "SURVEY_LAT", "GLUCOSE"
+)
+
+vars_integer <- c(
+  "INT_TOPOL_BY_BUFFER", "INT_WALK_BY_BUFFER",
+  "N_SUPERMARKET", "N_GREENGROCER", "N_CONVENIENCE",
+  "N_MARKETPLACE", "N_HEALTH_MARKET",
+  "N_FAST", "N_REST_FF", "N_FOODCOURT",
+  "N_FAST_TOTAL", "N_BAKERY", "N_PASTRY",
+  "N_CONFECTIONERY", "N_CAFE", "N_ICE",
+  "N_BAKERY_TOTAL", "N_UNHEALTH_MARKET",
+  "PEOPLE_AT_HOME"
+)
+
+# Función para especificar la clase de la variable en cada base de datos
+
+estandarizar_base <- function(df) {
+
+  df %>%
+    mutate(
+      across(any_of(vars_character), as.character),
+      across(any_of(vars_factor), ~ factor(.)),
+      across(any_of(vars_numeric), as.numeric),
+      across(any_of(vars_integer), ~ as.integer(round(.)))
+    )
+
+}
+
+# Aplicar la función en cada base
+
+bogota <- estandarizar_base(BOGOTA)
+medellin <- estandarizar_base(MEDELLIN)
+cali <- estandarizar_base(CALI)
+bucaramanga <- estandarizar_base(BUCARAMANGA)
+barranquilla <- estandarizar_base(BARRANQUILLA)
+
+```
+
+
+## 2. Unir bases de datos
+
+```{r echo=TRUE, warning=FALSE}
+bases <- list(
+  bogota = bogota,
+  medellin = medellin,
+  cali = cali,
+  bucaramanga = bucaramanga,
+  barranquilla = barranquilla
+)
+
+base_total <- bind_rows(
+  bogota,
+  medellin,
+  cali,
+  bucaramanga,
+  barranquilla
+)
+```
+
+## 3. Crear nuevas variables
+
+```{r}
+base_total <- base_total %>%
+  rename(WC = WAIST_CIRCUNF)
+
+base_total <- base_total %>%
+  mutate(
+    # 1) AGE_GROUP
+    AGE_GROUP = case_when(
+      AGE < 18 ~ 0,
+      AGE >= 18 & AGE <= 39 ~ 1,
+      AGE >= 40 & AGE <= 59 ~ 2,
+      AGE >= 60 & AGE <= 80 ~ 3,
+      TRUE ~ NA_real_
+    ),
+    AGE_GROUP = factor(
+      AGE_GROUP,
+      levels = c(0, 1, 2, 3),
+      labels = c("Menor de 18 años", "18-39 años", "40-59 años", "60-80 años")
+    ),
+
+    # 2) EDU_GROUP 
+    EDU_GROUP = case_when(
+      EDU_LEVEL %in% c(1, 2) ~ 1,       # Primaria o menos
+      EDU_LEVEL %in% c(3, 4) ~ 2,       # Secundaria o técnico
+      EDU_LEVEL %in% c(5, 6) ~ 3,       # Profesional o mayor
+      TRUE ~ NA_real_
+    ),
+    EDU_GROUP = factor(
+      EDU_GROUP,
+      levels = c(1, 2, 3),
+      labels = c("Primaria o menos", "Secundaria o técnico", "Profesional o mayor")
+    ),
+
+    # 3) SEL_GROUP (basado en SOC_ECON_LEVEL: 1-6)
+    SEL_GROUP = case_when(
+      SOC_ECON_LEVEL %in% c(1, 2) ~ 1,
+      SOC_ECON_LEVEL == 3 ~ 2,
+      SOC_ECON_LEVEL == 4 ~ 3,
+      SOC_ECON_LEVEL %in% c(5, 6) ~ 4,
+      TRUE ~ NA_real_
+    ),
+    SEL_GROUP = factor(
+      SEL_GROUP,
+      levels = c(1, 2, 3, 4),
+      labels = c("Estrato 1 y 2", "Estrato 3", "Estrato 4", "Estrato 5 y 6")
+    ),
+
+    # 4) BMI (kg / m^2) - HEIGHT en cm
+    BMI = WEIGHT / ( (HEIGHT / 100)^2 ),
+
+    # 5) BMI_CAT (solo adultos; <18 = NA)
+    BMI_CAT = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI < 18.5 ~ 1,
+      BMI >= 18.5 & BMI < 25 ~ 2,
+      BMI >= 25 & BMI < 30 ~ 3,
+      BMI >= 30 ~ 4,
+      TRUE ~ NA_real_
+    ),
+    BMI_CAT = factor(
+      BMI_CAT,
+      levels = c(1, 2, 3, 4),
+      labels = c("Bajo peso", "Normopeso", "Sobrepeso", "Obesidad")
+    ),
+
+    # 6) OVERWEIGHT (solo sobrepeso vs resto; adultos)
+    OVERWEIGHT = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 25 & BMI < 30 ~ 2,
+      !is.na(BMI) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OVERWEIGHT = factor(
+      OVERWEIGHT,
+      levels = c(1, 2),
+      labels = c("No sobrepeso", "Sobrepeso")
+    ),
+
+    # 7) OBESITY (adultos)
+    OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 30 ~ 2,
+      BMI < 30 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OBESITY = factor(
+      OBESITY,
+      levels = c(1, 2),
+      labels = c("No obesidad", "Obesidad")
+    ),
+
+    # 8) OVERW_OBESITY (adultos)
+    OVERW_OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 25 ~ 2,
+      BMI < 25 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OVERW_OBESITY = factor(
+      OVERW_OBESITY,
+      levels = c(1, 2),
+      labels = c("No (IMC <25)", "Sí (IMC >=25)")
+    ),
+
+    # 9) ABDOM_OBESITY (adultos; umbrales que diste)
+    # SEX: 1=Masculino, 2=Femenino (según tu diccionario)
+    ABDOM_OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      SEX == 2 & WC >= 90 ~ 2,  # Mujeres
+      SEX == 1 & WC >= 94 ~ 2,  # Hombres
+      !is.na(WC) & SEX %in% c(1,2) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    ABDOM_OBESITY = factor(
+      ABDOM_OBESITY,
+      levels = c(1, 2),
+      labels = c("No", "Sí")
+    ),
+
+    # 10) DIABETES_GLUCOSE (>=200 mg/dl)
+    DIABETES_GLUCOSE = case_when(
+      GLUCOSE < 200 ~ 1,
+      GLUCOSE >= 200 ~ 2,
+      TRUE ~ NA_real_
+    ),
+    DIABETES_GLUCOSE = factor(
+      DIABETES_GLUCOSE,
+      levels = c(1, 2),
+      labels = c("No", "Sí")
+    ),
+
+    # 11) DIABETES (antecedente o glucometría)
+    # DIABETES_PREV: 0=No, 1=Sí (según tu tabla)
+    DIABETES = case_when(
+      DIABETES_GLUCOSE == "Sí" | DIABETES_PREV %in% c(1, "1", "Sí", "Si") ~ 2,
+      DIABETES_GLUCOSE == "No" & DIABETES_PREV %in% c(0, "0", "No") ~ 1,
+      TRUE ~ NA_real_
+    ),
+    DIABETES = factor(
+      DIABETES,
+      levels = c(1, 2),
+      labels = c("No diabetes", "Diabetes")
+    ),
+    SEX = factor(
+      SEX,
+      levels = c(1, 2),
+      labels = c("Hombre", "Mujer")
+    ),
+    JOB_GROUP = case_when(
+      JOB == 1 ~ 1,
+      JOB == 2 ~ 2,
+      JOB == 3 ~ 2,
+      JOB == 4 ~ 3,
+      JOB == 5 ~ 4,
+      JOB == 6 ~ 5,
+      JOB == 7 ~ 6,
+      JOB == 8 ~ 7,
+      TRUE ~ NA_real_
+    ),
+    JOB_GROUP = factor(
+      JOB_GROUP,
+      levels = c(1,2,3,4,5,6,7),
+      labels = c("Empleado",
+                 "Independiente",
+                 "Pensionado",
+                 "Desempleado",
+                 "Estudiante",
+                 "Hogar",
+                 "Menor en casa")
+    ),
+    HOME_PEOPLE = case_when(
+      PEOPLE_AT_HOME == 1 ~ 1,
+      PEOPLE_AT_HOME == 2 ~ 2,
+      PEOPLE_AT_HOME == 3 ~ 3,
+      PEOPLE_AT_HOME >= 4 ~ 4,
+      TRUE ~ NA_real_
+      ),
+    HOME_PEOPLE = factor(
+      HOME_PEOPLE,
+      levels = c(1,2,3,4),
+      labels = c("Vive solo",
+                 "Vive con una persona",
+                 "Vive con dos personas",
+                 "Vive con tres o más personas")
+    )
+  )
+```
+
+## 4. Crear base con población de estudio.
+
+```{r}
+BASE_ESTUDIO <- base_total %>%
+  filter(
+    AGE >= 18,
+    !(SEX == 2 & PREGNANCY == "Sí")
+  )
+```
+
+## 5. Evaluar outliers en BMI y perímetro abdominal. Verificar valor en base original, en caso de no plausibilidad tratar como dato faltante.
+
+```{r echo=TRUE}
+# PESO
+
+out_weight <- BASE_ESTUDIO %>%
+  filter(WEIGHT %in% boxplot(WEIGHT)$out) %>%
+  select(ID, WEIGHT, HEIGHT, BMI, WC) %>%
+  mutate(
+    WEIGHT_REV = NA_real_,
+    DECISION = NA_character_
+  ) %>%
+  as.data.frame()
+
+out_weight
+
+```
+
+Revisión de outliers con base original
+
+```{r echo=FALSE}
+out_weight <- out_weight %>%
+  mutate(
+    WEIGHT_REV = case_when(
+      ID == 106642 ~ WEIGHT,   
+      ID == 106898 ~ WEIGHT,
+      ID == 136968 ~ WEIGHT,
+      ID == 221262 ~ WEIGHT,
+      ID == 285951 ~ WEIGHT,
+      ID == 297185 ~ WEIGHT,
+      ID == 328341 ~ WEIGHT,
+      ID == 449246 ~ WEIGHT,
+      ID == 557847 ~ WEIGHT,
+      ID == 795509 ~ WEIGHT,
+      ID == 806458 ~ WEIGHT,
+      ID == 258315 ~ WEIGHT,
+      ID == 908362 ~ WEIGHT,
+      ID == 923667 ~ WEIGHT,
+      ID == 5588   ~ WEIGHT,
+      ID == 166363 ~ WEIGHT,
+      ID == 238307 ~ WEIGHT,
+      ID == 508052 ~ WEIGHT,
+      ID == 699597 ~ WEIGHT,
+      ID == 757742 ~ 83.8,
+      ID == 775220 ~ WEIGHT,
+      ID == 927440 ~ WEIGHT,
+      ID == 52215  ~ WEIGHT,
+      ID == 275042 ~ WEIGHT,
+      ID == 332156 ~ WEIGHT,
+      ID == 339549 ~ WEIGHT,
+      ID == 365011 ~ WEIGHT,
+      ID == 486755 ~ WEIGHT,
+      ID == 561843 ~ WEIGHT,
+      ID == 658482 ~ WEIGHT,
+      ID == 906863 ~ WEIGHT,
+      ID == 120261 ~ WEIGHT,
+      ID == 158223 ~ WEIGHT,
+      ID == 378581 ~ WEIGHT,
+      ID == 570446 ~ WEIGHT,
+      ID == 667210 ~ WEIGHT,
+      ID == 788994 ~ WEIGHT,
+      ID == 858324 ~ WEIGHT,
+      TRUE ~ WEIGHT_REV
+    ),
+    DECISION = case_when(
+      ID == 106642 ~ "IGUAL",  
+      ID == 106898 ~ "IGUAL",
+      ID == 136968 ~ "IGUAL",
+      ID == 221262 ~ "IGUAL",
+      ID == 285951 ~ "IGUAL",
+      ID == 297185 ~ "IGUAL",
+      ID == 328341 ~ "NA",
+      ID == 449246 ~ "IGUAL",
+      ID == 557847 ~ "NA",
+      ID == 795509 ~ "IGUAL",
+      ID == 806458 ~ "NA",
+      ID == 258315 ~ "IGUAL",
+      ID == 908362 ~ "IGUAL",
+      ID == 923667 ~ "IGUAL",
+      ID == 5588   ~ "IGUAL",
+      ID == 166363 ~ "IGUAL",
+      ID == 238307 ~ "IGUAL",
+      ID == 508052 ~ "IGUAL",
+      ID == 699597 ~ "IGUAL",
+      ID == 757742 ~ "83.8",
+      ID == 775220 ~ "IGUAL",
+      ID == 927440 ~ "IGUAL",
+      ID == 52215  ~ "IGUAL",
+      ID == 275042 ~ "IGUAL",
+      ID == 332156 ~ "IGUAL",
+      ID == 339549 ~ "IGUAL",
+      ID == 365011 ~ "IGUAL",
+      ID == 486755 ~ "IGUAL",
+      ID == 561843 ~ "IGUAL",
+      ID == 658482 ~ "IGUAL",
+      ID == 906863 ~ "IGUAL",
+      ID == 120261 ~ "IGUAL",
+      ID == 158223 ~ "IGUAL",
+      ID == 378581 ~ "IGUAL",
+      ID == 570446 ~ "IGUAL",
+      ID == 667210 ~ "IGUAL",
+      ID == 788994 ~ "IGUAL",
+      ID == 858324 ~ "IGUAL",
+      TRUE ~ DECISION
+    )
+  ) %>%
+  as.data.frame()
+
+out_weight
+
+```
+
+```{r}
+# Incorporación de cambios de acuerdo a la decisión en peso
+
+# Peso corregido
+BASE_ESTUDIO$WEIGHT[BASE_ESTUDIO$ID == 757742] <- 83.8
+
+# Pesos invalidados
+BASE_ESTUDIO$WEIGHT[BASE_ESTUDIO$ID %in% c(328341, 
+                                           557847, 
+                                           806458)] <- NA
+```
+
+
+
+```{r}
+# TALLA
+
+out_height <- BASE_ESTUDIO %>%
+  filter(HEIGHT %in% boxplot(HEIGHT)$out) %>%
+  select(ID, WEIGHT, HEIGHT, BMI, WC) %>%
+  mutate(
+    HEIGHT_REV = NA_real_,
+    DECISION = NA_character_
+  ) %>%
+  as.data.frame()
+
+out_height
+```
+Revisión de outliers con base original
+
+```{r echo=FALSE}
+out_height <- out_height %>%
+  mutate(
+    HEIGHT_REV = case_when(
+      ID == 106898 ~ HEIGHT,   
+      ID == 328341 ~ HEIGHT,
+      ID == 557847 ~ HEIGHT,
+      ID == 806458 ~ HEIGHT,
+      ID == 164073 ~ HEIGHT,
+      ID == 348569 ~ HEIGHT,
+      ID == 544915 ~ HEIGHT,
+      ID == 570446 ~ HEIGHT,
+      TRUE ~ HEIGHT_REV
+    ),
+    DECISION = case_when(
+      ID == 106898 ~ "IGUAL",  
+      ID == 328341 ~ "NA",
+      ID == 557847 ~ "NA",
+      ID == 806458 ~ "NA",
+      ID == 164073 ~ "IGUAL",
+      ID == 348569 ~ "NA",
+      ID == 544915 ~ "IGUAL",
+      ID == 570446 ~ "IGUAL",
+      TRUE ~ DECISION
+    )
+  ) %>%
+  as.data.frame()
+
+out_height
+
+
+```
+
+
+```{r}
+# Incorporación de cambios de acuerdo a la decisión en talla
+
+# TALLA invalidados
+BASE_ESTUDIO$HEIGHT[BASE_ESTUDIO$ID %in% c(328341, 
+                                           557847, 
+                                           806458, 
+                                           348569)] <- NA
+
+```
+
+Recalculo la variable BMI para que incorpore NA cuando el peso o talla cambiaron a NA por implausibilidad.
+
+```{r}
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(BMI = WEIGHT / ( (HEIGHT / 100)^2 ))
+```
+
+
+```{r}
+# BMI
+
+out_bmi <- BASE_ESTUDIO %>%
+  filter(BMI %in% boxplot(BMI)$out) %>%
+  select(ID, AGE, SEX, WEIGHT, HEIGHT, BMI, WC) %>%
+  mutate(
+    BMI_REV = NA_character_,
+    DECISION = NA_character_
+  ) %>%
+  as.data.frame()
+
+out_bmi
+
+```
+Decisión en outliers: tratar como NA los BMI mayores a 45
+
+```{r echo=FALSE}
+out_bmi <- out_bmi %>%
+  mutate(
+    BMI_REV = case_when(
+      ID == 106642 ~ "Plausible",
+      ID == 170549 ~ "Plausible",
+      ID == 221262 ~ "Plausible",
+      ID == 342620 ~ "Plausible",
+      ID == 589566 ~ "Plausible",
+      ID == 138886 ~ "Plausible",
+      ID == 250166 ~ "Plausible",
+      ID == 258315 ~ "Plausible",
+      ID == 591041 ~ "Plausible",
+      ID == 667340 ~ "Plausible",
+      ID == 859768 ~ "Plausible",
+      ID == 908362 ~ "Plausible",
+      ID == 166363 ~ "Plausible",
+      ID == 238307 ~ "Plausible",
+      ID == 346796 ~ "Plausible",
+      ID == 508052 ~ "Plausible",
+      ID == 693877 ~ "Plausible",
+      ID == 699597 ~ "Plausible",
+      ID == 775220 ~ "Plausible",
+      ID == 52215  ~ "Plausible",
+      ID == 89459  ~ "Plausible",
+      ID == 139359 ~ "Plausible",
+      ID == 332156 ~ "Plausible",
+      ID == 486755 ~ "Plausible",
+      ID == 561843 ~ "Plausible",
+      ID == 642707 ~ "Plausible",
+      ID == 906863 ~ "Plausible",
+      ID == 915860 ~ "Plausible",
+      ID == 120261 ~ "Plausible",
+      ID == 158223 ~ "Plausible",
+      ID == 283588 ~ "Plausible",
+      ID == 378581 ~ "Plausible",
+      ID == 458902 ~ "Plausible",
+      ID == 809798 ~ "Plausible",
+      TRUE ~ BMI_REV
+    ),
+    DECISION = case_when(
+      ID == 106642 ~ "IGUAL",
+      ID == 170549 ~ "IGUAL",
+      ID == 221262 ~ "NA",
+      ID == 342620 ~ "IGUAL",
+      ID == 589566 ~ "IGUAL",
+      ID == 138886 ~ "IGUAL",
+      ID == 250166 ~ "IGUAL",
+      ID == 258315 ~ "IGUAL",
+      ID == 591041 ~ "IGUAL",
+      ID == 667340 ~ "IGUAL",
+      ID == 859768 ~ "IGUAL",
+      ID == 908362 ~ "NA",
+      ID == 166363 ~ "NA",
+      ID == 238307 ~ "NA",
+      ID == 346796 ~ "IGUAL",
+      ID == 508052 ~ "IGUAL",
+      ID == 693877 ~ "IGUAL",
+      ID == 699597 ~ "IGUAL",
+      ID == 775220 ~ "NA",
+      ID == 52215  ~ "NA",
+      ID == 89459  ~ "IGUAL",
+      ID == 139359 ~ "IGUAL",
+      ID == 332156 ~ "IGUAL",
+      ID == 486755 ~ "IGUAL",
+      ID == 561843 ~ "IGUAL",
+      ID == 642707 ~ "IGUAL",
+      ID == 906863 ~ "NA",
+      ID == 915860 ~ "IGUAL",
+      ID == 120261 ~ "IGUAL",
+      ID == 158223 ~ "IGUAL",
+      ID == 283588 ~ "IGUAL",
+      ID == 378581 ~ "IGUAL",
+      ID == 458902 ~ "NA",
+      ID == 809798 ~ "IGUAL",
+      TRUE ~ DECISION
+    )
+  ) %>%
+  as.data.frame()
+
+out_bmi
+
+```
+
+```{r}
+
+# Incorporación de cambios de acuerdo a la decisión en BMI
+
+# IMC mayores a 45
+BASE_ESTUDIO$BMI[BASE_ESTUDIO$ID %in% c(221262, 
+                                        908362,
+                                        166363,
+                                        238307,
+                                        775220,
+                                        52215,
+                                        906863,
+                                        458902)] <- NA
+```
+
+
+```{r}
+# WC
+
+out_wc <- BASE_ESTUDIO %>%
+  filter(WC %in% boxplot(WC)$out) %>%
+  select(ID, AGE, SEX, WEIGHT, HEIGHT, BMI, WC) %>%
+  mutate(
+    WC_REV = NA_real_,
+    DECISION = NA_character_
+  ) %>%
+  as.data.frame()
+
+out_wc
+
+```
+Decisión de acuerdo con base original
+
+```{r echo=FALSE}
+out_wc <- out_wc %>%
+  mutate(
+    WC_REV = case_when(
+      ID == 106898 ~ WC,
+      ID == 221262 ~ WC,
+      ID == 328341 ~ WC,
+      ID == 449246 ~ WC,
+      ID == 589566 ~ 16.4,
+      ID == 138886 ~ WC,
+      ID == 250166 ~ WC,
+      ID == 497225 ~ WC,
+      ID == 870592 ~ WC,
+      ID == 908362 ~ WC,
+      ID == 178018 ~ 81,
+      ID == 238307 ~ WC,
+      ID == 508052 ~ WC,
+      ID == 690869 ~ WC,
+      ID == 775220 ~ WC,
+      ID == 52215  ~ WC,
+      ID == 139359 ~ WC,
+      ID == 486755 ~ WC,
+      ID == 642707 ~ WC,
+      ID == 658482 ~ WC,
+      ID == 906863 ~ WC,
+      ID == 915860 ~ WC,
+      ID == 993664 ~ WC,
+      ID == 96778  ~ WC,
+      ID == 378581 ~ WC,
+      ID == 458902 ~ WC,
+      TRUE ~ WC_REV
+    ),
+    DECISION = case_when(
+      ID == 106898 ~ "IGUAL",
+      ID == 221262 ~ "IGUAL",
+      ID == 328341 ~ "NA",
+      ID == 449246 ~ "IGUAL",
+      ID == 589566 ~ "NA",
+      ID == 138886 ~ "IGUAL",
+      ID == 250166 ~ "IGUAL",
+      ID == 497225 ~ "NA",
+      ID == 870592 ~ "IGUAL",
+      ID == 908362 ~ "IGUAL",
+      ID == 178018 ~ "NA",
+      ID == 238307 ~ "IGUAL",
+      ID == 508052 ~ "IGUAL",
+      ID == 690869 ~ "IGUAL",
+      ID == 775220 ~ "IGUAL",
+      ID == 52215  ~ "IGUAL",
+      ID == 139359 ~ "IGUAL",
+      ID == 486755 ~ "IGUAL",
+      ID == 642707 ~ "IGUAL",
+      ID == 658482 ~ "IGUAL",
+      ID == 906863 ~ "IGUAL",
+      ID == 915860 ~ "IGUAL",
+      ID == 993664 ~ "IGUAL",
+      ID == 96778  ~ "NA",
+      ID == 378581 ~ "IGUAL",
+      ID == 458902 ~ "IGUAL",
+      TRUE ~ DECISION
+    )
+  ) %>%
+  as.data.frame()
+```
+
+NA cuando WC es menor de 56 cm, además se cambiará el BMI por NA por ser datos impalusibles para adultos.
+
+```{r}
+# Incorporación de cambios de acuerdo a la decisión en perímetro abdominal
+
+# WC menor a 60 cm
+BASE_ESTUDIO$WC[BASE_ESTUDIO$ID %in% c(328341, 
+                                        589566,
+                                        497225,
+                                        178018,
+                                        96778)] <- NA
+
+BASE_ESTUDIO$BMI[BASE_ESTUDIO$ID %in% c(328341,
+                                        497225,
+                                        96778)] <- NA
+
+```
+
+
+
+## 6. Crear objeto con diseño multietápico.
+
+```{r}
+library(survey)
+
+COPEN_DESIGN_TESIS <- svydesign(
+  ids = ~ID_SECTOR + ID_SECTION + ID_MZN, # Especifico los niveles del muestreo
+  strata = ~CITY_NAME, # Especifico los estratos que se establecieron antes del
+  # muestreo
+  weights = ~EXP_FACTOR, # Especifico qué variable es el peso
+  data = BASE_ESTUDIO, # Especifico la base de datos
+  nest = TRUE # Tnedrá en cuenta que la MZN está anidada la sección y 
+  # la sección al sector
+)    
+```
+
+
+## 7. Evaluar normalidad en variables continuas y definir si reportar mediana o media.
+
+### Peso
+
+```{r}
+# 1. Comparación media y mediana
+
+# Media ponderada
+svymean(~WEIGHT, COPEN_DESIGN_TESIS, na.rm = TRUE)
+
+# Mediana ponderada (y otros cuantiles)
+svyquantile(~WEIGHT, COPEN_DESIGN_TESIS, quantiles = c(0.25, 0.5, 0.75), na.rm = TRUE)
+
+# 2. Gráficos
+
+# Media ponderada
+mean_w <- coef(svymean(~WEIGHT, COPEN_DESIGN_TESIS, na.rm = TRUE))
+
+# Mediana ponderada
+median_w <- coef(svyquantile(~WEIGHT, COPEN_DESIGN_TESIS,
+                             quantiles = 0.5,
+                             na.rm = TRUE))
+# Histograma
+svyhist(
+  ~WEIGHT,
+  COPEN_DESIGN_TESIS,
+  main = "Histograma ponderado de peso",
+  xlab = "Peso (kg)"
+)
+
+# Línea vertical de la media
+abline(v = mean_w, col = "red", lwd = 2)
+
+# Línea vertical de la mediana
+abline(v = median_w, col = "darkgreen", lwd = 2, lty = 2)
+
+legend(
+  "topright",
+  legend = c("Media ponderada", "Mediana ponderada"),
+  col = c("red", "darkgreen"),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n"
+)
+```
+
+Aunque la media y la mediana fueron parecidas, la distribución ponderada del peso presenta asimetria por datos plausibles a la derecha, por lo que decido reportar mediana y rangos intercuartiles. 
+
+### Talla
+
+```{r}
+# 1. Comparación media y mediana
+
+# Media ponderada
+svymean(~HEIGHT, COPEN_DESIGN_TESIS, na.rm = TRUE)
+
+# Mediana ponderada (y otros cuantiles)
+svyquantile(~HEIGHT, COPEN_DESIGN_TESIS, quantiles = c(0.25, 0.5, 0.75), na.rm = TRUE)
+
+# 2. Gráficos
+
+# Media ponderada
+mean_h <- coef(svymean(~HEIGHT, COPEN_DESIGN_TESIS, na.rm = TRUE))
+
+# Mediana ponderada
+median_h <- coef(svyquantile(~WEIGHT, COPEN_DESIGN_TESIS,
+                             quantiles = 0.5,
+                             na.rm = TRUE))
+# Histograma
+svyhist(
+  ~HEIGHT,
+  COPEN_DESIGN_TESIS,
+  main = "Histograma ponderado de talla",
+  xlab = "Talla (cm)"
+)
+
+# Línea vertical de la media
+abline(v = mean_h, col = "red", lwd = 2)
+
+# Línea vertical de la mediana
+abline(v = median_h, col = "darkgreen", lwd = 2, lty = 2)
+
+legend(
+  "topright",
+  legend = c("Media ponderada", "Mediana ponderada"),
+  col = c("red", "darkgreen"),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n"
+)
+```
+
+En este caso la media y la mediana se sobreponen por ser casi idénticas, sin embargo en el histograma hay valores extremos a la derecha que desvian la simetría de la distibución. Por lo anterior decido reportar mediana y rango intercuartil.
+
+### IMC
+
+```{r}
+# 1. Comparación media y mediana
+
+# Media ponderada
+svymean(~BMI, COPEN_DESIGN_TESIS, na.rm = TRUE)
+
+# Mediana ponderada (y otros cuantiles)
+svyquantile(~BMI, COPEN_DESIGN_TESIS, quantiles = c(0.25, 0.5, 0.75), na.rm = TRUE)
+
+# 2. Gráficos
+
+# Media ponderada
+mean_b <- coef(svymean(~BMI, COPEN_DESIGN_TESIS, na.rm = TRUE))
+
+# Mediana ponderada
+median_b <- coef(svyquantile(~BMI, COPEN_DESIGN_TESIS,
+                             quantiles = 0.5,
+                             na.rm = TRUE))
+# Histograma
+svyhist(
+  ~BMI,
+  COPEN_DESIGN_TESIS,
+  main = "Histograma ponderado de BMI",
+  xlab = "BMI (Kg/m2)"
+)
+
+# Línea vertical de la media
+abline(v = mean_b, col = "red", lwd = 2)
+
+# Línea vertical de la mediana
+abline(v = median_b, col = "darkgreen", lwd = 2, lty = 2)
+
+legend(
+  "topright",
+  legend = c("Media ponderada", "Mediana ponderada"),
+  col = c("red", "darkgreen"),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n"
+)
+```
+
+Se observa asimetría positiva con datos extremos a la derecha que influyen en la media. Por lo tanto, reportaré mediana y rango intercuartil.
+
+### Perímetro abdominal
+
+```{r}
+# 1. Comparación media y mediana
+
+# Media ponderada
+svymean(~WC, COPEN_DESIGN_TESIS, na.rm = TRUE)
+
+# Mediana ponderada (y otros cuantiles)
+svyquantile(~WC, COPEN_DESIGN_TESIS, quantiles = c(0.25, 0.5, 0.75), na.rm = TRUE)
+
+# 2. Gráficos
+
+# Media ponderada
+mean_w <- coef(svymean(~WC, COPEN_DESIGN_TESIS, na.rm = TRUE))
+
+# Mediana ponderada
+median_w <- coef(svyquantile(~WC, COPEN_DESIGN_TESIS,
+                             quantiles = 0.5,
+                             na.rm = TRUE))
+# Histograma
+svyhist(
+  ~WC,
+  COPEN_DESIGN_TESIS,
+  main = "Histograma ponderado de Perímetro abdominal",
+  xlab = "Perímetro abdominal (cm)"
+)
+
+# Línea vertical de la media
+abline(v = mean_w, col = "red", lwd = 2)
+
+# Línea vertical de la mediana
+abline(v = median_w, col = "darkgreen", lwd = 2, lty = 2)
+
+legend(
+  "topright",
+  legend = c("Media ponderada", "Mediana ponderada"),
+  col = c("red", "darkgreen"),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n"
+)
+```
+
+Se observa asimetría positiva con datos extremos a la derecha que influyen en la media. Por lo tanto, reportaré mediana y rango intercuartil.
+
+### Edad
+
+```{r}
+# 1. Comparación media y mediana
+
+# Media ponderada
+svymean(~AGE, COPEN_DESIGN_TESIS, na.rm = TRUE)
+
+# Mediana ponderada (y otros cuantiles)
+svyquantile(~AGE, COPEN_DESIGN_TESIS, quantiles = c(0.25, 0.5, 0.75), na.rm = TRUE)
+
+# 2. Gráficos
+
+# Media ponderada
+mean_a <- coef(svymean(~AGE, COPEN_DESIGN_TESIS, na.rm = TRUE))
+
+# Mediana ponderada
+median_a <- coef(svyquantile(~AGE, COPEN_DESIGN_TESIS,
+                             quantiles = 0.5,
+                             na.rm = TRUE))
+# Histograma
+svyhist(
+  ~AGE,
+  COPEN_DESIGN_TESIS,
+  main = "Histograma ponderado de edad",
+  xlab = "Edad (años)"
+)
+
+# Línea vertical de la media
+abline(v = mean_a, col = "red", lwd = 2)
+
+# Línea vertical de la mediana
+abline(v = median_a, col = "darkgreen", lwd = 2, lty = 2)
+
+legend(
+  "topright",
+  legend = c("Media ponderada", "Mediana ponderada"),
+  col = c("red", "darkgreen"),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n"
+)
+```
+
+Distribución bimodal. Decido reportar mediana y rango intercuartil.
+
+## 8. Hacer tabla 1 completa expandida
+
+Teniendo en cuenta que el estudio COPEN utilizó un muestreo probabilístico polietápico, los análisis mostrados a continuación son estimaciones de acuerdo con el factor de expansión de cada participante, definidos a partir de ponderaciones por ciudad, sexo y estrato socioeconómico. La muestra de estudio extraída del estudio COPEN fue de n=1786 participantes en las ciudades de Bogotá, Medellín, Cali, Bucaramanga y Barranquilla. Luego de aplicar los factores de expansión la muestra de estudio fue equivalente a 10.958.954 adultos. En la Tabla 1 se presentan las características de la muestra de estudio expandida.
+
+```{r}
+library(gtsummary)
+
+table_weighted_tesis <- COPEN_DESIGN_TESIS %>%
+  tbl_svysummary(
+    # Dividida según
+    by = SEX,
+    # Incluir las siguientes variables
+    include = c(AGE,
+                AGE_GROUP,
+                CITY_NAME,
+                SEL_GROUP,
+                EDU_GROUP,
+                JOB_GROUP,
+                HOME_PEOPLE,
+                HEIGHT,
+                WEIGHT,
+                BMI,
+                BMI_CAT,
+                WC,
+                ABDOM_OBESITY),
+    # Especifico el tipo de cada variable
+    type = list(
+      AGE ~ "continuous",
+      AGE_GROUP ~ "categorical",
+      CITY_NAME ~ "categorical",
+      SEL_GROUP ~ "categorical",
+      EDU_GROUP ~ "categorical",
+      JOB_GROUP ~ "categorical",
+      HOME_PEOPLE ~ "categorical",
+      HEIGHT ~ "continuous",
+      WEIGHT ~ "continuous",
+      BMI ~ "continuous",
+      BMI_CAT ~ "categorical",
+      WC ~ "continuous",
+      ABDOM_OBESITY ~ "categorical"),
+    # Incluir las estadisticas
+    statistic = list(
+      all_continuous()  ~ "{median} ({p25}, {p75})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = list(
+      all_continuous()  ~ c(2, 2),
+      all_categorical() ~ c(0, 1)
+    ),
+    missing_text = "Datos faltantes",
+    missing = "no",
+    label  = list(AGE ~ "Edad (años)",
+                  AGE_GROUP ~ "Grupo etario",
+                  CITY_NAME ~ "Ciudad",
+                  SEL_GROUP ~ "Estrato socioeconómico",
+                  EDU_GROUP ~ "Nivel educativo",
+                  JOB_GROUP ~ "Ocupación",
+                  HOME_PEOPLE ~ "Tamaño del hogar",
+                  HEIGHT ~ "Talla (cm)",
+                  WEIGHT ~ "Peso (Kg)",
+                  BMI ~ "Índice de masa corporal (Kg/m2)", 
+                  BMI_CAT ~ "Estado nutricional",
+                  WC ~ "Perímetro abdominal (cm)",
+                  ABDOM_OBESITY ~ "Obesidad abdominal"
+  ))%>%
+  add_overall(
+    last = TRUE,
+    col_label = "**Total**  \nN = {style_number(N)}"
+  ) %>%
+  modify_header(label = "**Variable**") %>%
+  modify_caption("Tabla 1. Características de la muestra de estudio (expandida)") %>%
+  bold_labels()
+
+# Ajustes de estilo adicionales:
+
+table_weighted_tesis <- table_weighted_tesis %>%
+  modify_table_body(
+    ~ .x %>%
+      dplyr::mutate(
+        label = dplyr::case_when(
+          variable == "CITY_NAME" & label == "BOGOTA"       ~ "Bogotá",
+          variable == "CITY_NAME" & label == "MEDELLIN"     ~ "Medellín",
+          variable == "CITY_NAME" & label == "CALI"         ~ "Cali",
+          variable == "CITY_NAME" & label == "BARRANQUILLA" ~ "Barranquilla",
+          variable == "CITY_NAME" & label == "BUCARAMANGA"  ~ "Bucaramanga",
+          TRUE ~ label
+        )
+      )
+  )
+
+table_weighted_tesis <- table_weighted_tesis %>%
+  modify_table_body(
+    ~ .x %>%
+      dplyr::filter(!(variable == "AGE_GROUP" & label == "Menor de 18 años"))
+  )
+
+table_weighted_tesis <- table_weighted_tesis %>%
+  modify_table_body(
+    ~ .x %>%
+      dplyr::filter(!(variable == "JOB_GROUP" & label == "Menor en casa"))
+  )
+
+table_weighted_tesis <- table_weighted_tesis %>%
+  modify_footnote(
+    all_stat_cols() ~ "Mediana (Q1, Q3); n (%)"
+  )
+
+table_weighted_tesis
+```
+
+El 53,3 % de la muestra expandida correspondió a mujeres. La mediana de la edad fue de 42 años (RIQ: 28–57) en las mujeres y de 38 años (RIQ: 26–56) en los hombres. Cerca de la mitad de los adultos se concentraron en el grupo etario de 18 a 39 años, mientras que el grupo de 60 a 80 años representó la menor proporción de la población.
+
+En concordancia con la distribución poblacional de las ciudades incluidas en la encuesta, Bogotá aportó la mayor proporción de participantes (54,7 %), seguida de Medellín (17,8 %), Cali (14,8 %), Barranquilla (8,5 %) y Bucaramanga (4,1 %).
+
+Respecto a las condiciones socioeconómicas, el 74,5 % de la población vivía en estrato 3 o inferior, mientras que solo el 11 % residía en estratos 5 y 6. En cuanto al nivel educativo, aproximadamente la mitad de los participantes había completado la educación secundaria, y el 26,2 % no contaba con educación primaria completa. La población económicamente activa representó el 54,8 %, mientras que el 7,7 % se encontraba en situación de desempleo y el 22,7 % se dedicaba a labores del hogar.
+
+En relación con la composición del hogar, una proporción reducida de los participantes vivía con tres o más personas (3,7 %), mientras que la mayoría residía sola (58,6 %).
+
+En cuanto a las medidas antropométricas, la mediana de la estatura fue mayor en los hombres (169,9 cm) que en las mujeres (156,5 cm). De forma similar, la mediana del peso fue superior en los hombres (72,0 kg) en comparación con las mujeres (65,1 kg). Por el contrario, la mediana del índice de masa corporal (IMC) fue mayor en las mujeres (26,75 kg/m²) que en los hombres (25,39 kg/m²), valores que en ambos sexos se ubicaron en el rango de sobrepeso. De acuerdo con la categorización del IMC, la proporción de obesidad fue aproximadamente 13 puntos porcentuales mayor en las mujeres que en los hombres.
+
+Finalmente, la mediana del perímetro abdominal en mujeres y hombres se situó por debajo de los puntos de corte propuestos para obesidad abdominal en población latinoamericana (<90 cm y <94 cm, respectivamente); no obstante, la prevalencia de obesidad abdominal fue mayor en las mujeres.
+
+## Tablas por ciudad
+
+```{r}
+library(dplyr)
+library(gtsummary)
+
+#=========================================================
+# 0) Crear diseños por ciudad (subconjuntos del survey)
+#=========================================================
+des_bogota <- subset(COPEN_DESIGN_TESIS, CITY_NAME == "BOGOTA")
+des_medellin <- subset(COPEN_DESIGN_TESIS, CITY_NAME == "MEDELLIN")
+des_cali <- subset(COPEN_DESIGN_TESIS, CITY_NAME == "CALI")
+des_barranquilla <- subset(COPEN_DESIGN_TESIS, CITY_NAME == "BARRANQUILLA")
+des_bucaramanga <- subset(COPEN_DESIGN_TESIS, CITY_NAME == "BUCARAMANGA")
+
+#=========================================================
+# 1) Función para construir Tabla 1 por ciudad
+#=========================================================
+make_table1_city <- function(design_city, city_label = "Bogotá") {
+  
+  tbl <- design_city %>%
+    tbl_svysummary(
+      by = SEX,
+      include = c(
+        AGE, AGE_GROUP,
+        SEL_GROUP, EDU_GROUP, JOB_GROUP, HOME_PEOPLE,
+        HEIGHT, WEIGHT, BMI, BMI_CAT, WC, ABDOM_OBESITY
+      ),
+      type = list(
+        AGE ~ "continuous",
+        AGE_GROUP ~ "categorical",
+        SEL_GROUP ~ "categorical",
+        EDU_GROUP ~ "categorical",
+        JOB_GROUP ~ "categorical",
+        HOME_PEOPLE ~ "categorical",
+        HEIGHT ~ "continuous",
+        WEIGHT ~ "continuous",
+        BMI ~ "continuous",
+        BMI_CAT ~ "categorical",
+        WC ~ "continuous",
+        ABDOM_OBESITY ~ "categorical"
+      ),
+      statistic = list(
+        all_continuous()  ~ "{median} ({p25}, {p75})",
+        all_categorical() ~ "{n} ({p}%)"
+      ),
+      digits = list(
+        all_continuous()  ~ c(2, 2),
+        all_categorical() ~ c(0, 1)
+      ),
+      missing_text = "Datos faltantes",
+      missing = "no",
+      label  = list(
+        AGE ~ "Edad (años)",
+        AGE_GROUP ~ "Grupo etario",
+        SEL_GROUP ~ "Estrato socioeconómico",
+        EDU_GROUP ~ "Nivel educativo",
+        JOB_GROUP ~ "Ocupación",
+        HOME_PEOPLE ~ "Tamaño del hogar",
+        HEIGHT ~ "Talla (cm)",
+        WEIGHT ~ "Peso (Kg)",
+        BMI ~ "Índice de masa corporal (Kg/m²)",
+        BMI_CAT ~ "Estado nutricional",
+        WC ~ "Perímetro abdominal (cm)",
+        ABDOM_OBESITY ~ "Obesidad abdominal"
+      )
+    ) %>%
+    add_overall(
+      last = TRUE,
+      col_label = "**Total**  \nN = {style_number(N)}"
+    ) %>%
+    modify_header(label = "**Variable**") %>%
+    modify_caption(paste0(
+      "Tabla 1. Características de la muestra de estudio (expandida). Ciudad: ",
+      city_label
+    )) %>%
+    bold_labels() %>%
+    modify_table_body(
+      ~ .x %>%
+        # excluir categorías que no aplican a tu población de adultos
+        dplyr::filter(!(variable == "AGE_GROUP" & label == "Menor de 18 años")) %>%
+        dplyr::filter(!(variable == "JOB_GROUP" & label == "Menor en casa"))
+    ) %>%
+    modify_footnote(
+      all_stat_cols() ~ "Mediana (Q1, Q3); n (%)"
+    )
+  
+  tbl
+}
+
+```
+
+Bogota
+
+```{r}
+table1_bogota <- make_table1_city(des_bogota, "Bogotá")
+table1_bogota
+```
+
+
+Medellin
+
+```{r}
+table1_medellin <- make_table1_city(des_medellin, "Medellín")
+table1_medellin
+```
+
+
+Cali
+
+```{r}
+table1_cali <- make_table1_city(des_cali, "Cali")
+table1_cali
+```
+
+
+Barranquilla
+
+```{r}
+table1_barranquilla <- make_table1_city(des_barranquilla, "Barranquilla")
+table1_barranquilla
+```
+
+
+Bucaramanga
+
+```{r}
+table1_bucaramanga <- make_table1_city(des_bucaramanga, "Bucaramanga")
+table1_bucaramanga
+```
+
+
+```{r}
+# Pesos 2 y 3 para PARA USAR PAQUETE WEMIX
+    
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR2 = 1)
+    
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR3 = 1)
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR4 = 1)
+
+# CREAR ID UNICO PARA BUFFERS anidados a la ciudad
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BUF_ID_CITY = interaction(CITY_CODE, BUFFER_ID70, drop = TRUE)
+  )
+
+# CREAR ID UNICO PARA BARRIOS anidados a la ciudad
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BARRIO_ID_CITY = interaction(CITY_CODE, ID_SUBURB, drop = TRUE)
+  )
+
+
+# Crear variables del AFC agrupadas al buffer
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  group_by(BUF_ID_CITY) %>%
+  mutate(
+    # Ambiente caminable
+    INT_WALK_BY_KM2_L2 = mean(INT_WALK_BY_KM2, na.rm = TRUE),
+
+    # Transporte público (robusta)
+    DIST_STOPS_MEDIAN_L2 = median(DIST_STOPS_MEDIAN, na.rm = TRUE),
+
+    # Zonas verdes
+    GREEN_PERC_L2 = mean(GREEN_PERC, na.rm = TRUE),
+
+    # Ambiente alimentario
+    DENS_HEALTH_MARKET_L2 = mean(DENS_HEALTH_MARKET, na.rm = TRUE),
+    DENS_UNHEALTH_MARKET_L2 = mean(DENS_UNHEALTH_MARKET, na.rm = TRUE)
+  ) %>%
+  ungroup()
+```
+
+
+
+```{r}
+BASE_ESTUDIO2 <- BASE_ESTUDIO %>%
+  mutate(
+    CITY_NAME = case_when(
+      CITY_NAME == "BOGOTA"       ~ "Bogotá",
+      CITY_NAME == "MEDELLIN"     ~ "Medellín",
+      CITY_NAME == "CALI"         ~ "Cali",
+      CITY_NAME == "BARRANQUILLA" ~ "Barranquilla",
+      CITY_NAME == "BUCARAMANGA"  ~ "Bucaramanga",
+      TRUE ~ as.character(CITY_NAME)
+    )
+  )
+
+library(survey)
+
+COPEN_DESIGN_TESIS <- svydesign(
+  ids = ~ID_SECTOR + ID_SECTION + ID_MZN, # Especifico los niveles del muestreo
+  strata = ~CITY_NAME, # Especifico los estratos que se establecieron antes del
+  # muestreo
+  weights = ~EXP_FACTOR, # Especifico qué variable es el peso
+  data = BASE_ESTUDIO2, # Especifico la base de datos
+  nest = TRUE # Tnedrá en cuenta que la MZN está anidada la sección y 
+  # la sección al sector
+)    
+
+
+library(dplyr)
+library(gtsummary)
+
+
+#------------------------------------------------------------
+# 1) Tabla por ciudad (columnas) + Total al final
+#    SEX pasa a ser fila (n y %)
+#    AFC: medias y (Q1, Q3)
+#------------------------------------------------------------
+table_city_weighted_tesis <- COPEN_DESIGN_TESIS %>%
+  tbl_svysummary(
+    by = CITY_NAME,  # <<< columnas = ciudades
+    include = c(
+      SEX,            # <<< ahora SEX es una fila (n y %)
+      AGE,
+      AGE_GROUP,
+      SEL_GROUP,
+      EDU_GROUP,
+      JOB_GROUP,
+      HOME_PEOPLE,
+      HEIGHT,
+      WEIGHT,
+      BMI,
+      BMI_CAT,
+      WC,
+      ABDOM_OBESITY,
+      # ---- variables AFC (nivel contextual) ----
+      INT_WALK_BY_KM2_L2,
+      DIST_STOPS_MEDIAN_L2,
+      GREEN_PERC_L2,
+      DENS_HEALTH_MARKET_L2,
+      DENS_UNHEALTH_MARKET_L2
+    ),
+    type = list(
+      # categóricas
+      SEX ~ "categorical",
+      AGE_GROUP ~ "categorical",
+      SEL_GROUP ~ "categorical",
+      EDU_GROUP ~ "categorical",
+      JOB_GROUP ~ "categorical",
+      HOME_PEOPLE ~ "categorical",
+      BMI_CAT ~ "categorical",
+      ABDOM_OBESITY ~ "categorical",
+      # continuas
+      AGE ~ "continuous",
+      HEIGHT ~ "continuous",
+      WEIGHT ~ "continuous",
+      BMI ~ "continuous",
+      WC ~ "continuous",
+      INT_WALK_BY_KM2_L2 ~ "continuous",
+      DIST_STOPS_MEDIAN_L2 ~ "continuous",
+      GREEN_PERC_L2 ~ "continuous",
+      DENS_HEALTH_MARKET_L2 ~ "continuous",
+      DENS_UNHEALTH_MARKET_L2 ~ "continuous"
+    ),
+    statistic = list(
+      all_continuous()  ~ "{median} ({p25}, {p75})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = list(
+      all_continuous()  ~ c(2, 2),
+      all_categorical() ~ c(0, 1)
+    ),
+    missing_text = "Datos faltantes",
+    missing = "no",
+    label = list(
+      SEX ~ "Sexo",
+      AGE ~ "Edad (años)",
+      AGE_GROUP ~ "Grupo etario",
+      SEL_GROUP ~ "Estrato socioeconómico",
+      EDU_GROUP ~ "Nivel educativo",
+      JOB_GROUP ~ "Ocupación",
+      HOME_PEOPLE ~ "Tamaño del hogar",
+      HEIGHT ~ "Talla (cm)",
+      WEIGHT ~ "Peso (Kg)",
+      BMI ~ "Índice de masa corporal (Kg/m²)",
+      BMI_CAT ~ "Estado nutricional",
+      WC ~ "Perímetro abdominal (cm)",
+      ABDOM_OBESITY ~ "Obesidad abdominal",
+      INT_WALK_BY_KM2_L2 ~ "Densidad de intersecciones (n/km²)",
+      DIST_STOPS_MEDIAN_L2 ~ "Distancia mediana a paraderos (m)",
+      GREEN_PERC_L2 ~ "Zonas verdes (%)",
+      DENS_HEALTH_MARKET_L2 ~ "Densidad de supermercados (n/km²)",
+      DENS_UNHEALTH_MARKET_L2 ~ "Densidad de restaurantes (n/km²)"
+    )
+  ) %>%
+  add_overall(
+    last = TRUE,
+    col_label = "**Total**  \nN = {style_number(N)}"
+  ) %>%
+  modify_header(label = "**Variable**") %>%
+  modify_caption("Tabla X. Características de la muestra por ciudad (expandida)") %>%
+  bold_labels() %>%
+  modify_footnote(
+    all_stat_cols() ~ "Mediana (Q1, Q3); n (%)"
+  )
+
+#------------------------------------------------------------
+# 2) Filtrar categorías que no saldrán
+#------------------------------------------------------------
+table_city_weighted_tesis <- table_city_weighted_tesis %>%
+  modify_table_body(
+    ~ .x %>%
+      dplyr::filter(!(variable == "AGE_GROUP" & label == "Menor de 18 años")) %>%
+      dplyr::filter(!(variable == "JOB_GROUP" & label == "Menor en casa"))
+  )
+
+table_city_weighted_tesis
+
+tabla_excel <- table_city_weighted_tesis %>%
+  as_tibble(col_labels = TRUE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

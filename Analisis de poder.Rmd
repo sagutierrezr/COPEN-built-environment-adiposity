@@ -1,0 +1,892 @@
+---
+title: "Poder"
+author: "Sebastian A Gutierrez-Romero"
+date: "2026-02-14"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readxl)
+library(dplyr) 
+library(ggplot2) 
+library(lme4)
+library(lmerTest)
+library(lmtest)
+library(performance) 
+library(WeMix)
+library(ggeffects)
+library(survey)
+library(tidyr)
+library(knitr)
+library(car)
+library(describedata)
+library(modelsummary)
+library(ggrepel)
+library(stringr)
+library(gt)
+library(forcats)
+library(purrr)
+
+
+BOGOTA <- read_excel("COPEN_BOGOTA_DATA_FINAL.xlsx")
+BARRANQUILLA <- read_excel("COPEN_BARRANQUILLA_DATA_FINAL.xlsx")
+MEDELLIN <- read_excel("COPEN_MEDELLIN_DATA_FINAL.xlsx")
+CALI <- read_excel("COPEN_CALI_DATA_FINAL.xlsx")
+BUCARAMANGA <- read_excel("COPEN_BUCARAMANGA_DATA_FINAL.xlsx")
+
+# Creo los grupos de variables
+
+vars_character <- c(
+  "ID", "ID_SECTOR", "ID_SECTION", "ID_MZN", "ID_SUBURB",
+  "SUBURB_NAME", "BUFFER_ID50", "BUFFER_ID60", "BUFFER_ID70",
+  "BUFFER_ID80", "BUFFER_ID90", "BUFFER_ID95",
+  "COUNTRY", "CITY_CODE", "ADDRESS_1", "SUBURB",
+  "ADDRESS_2", "FULL_ADDRESS", "RECORD"
+)
+
+vars_factor <- c(
+  "CITY_NAME", "SEX", "SOC_ECON_LEVEL", "JOB",
+  "EDU_LEVEL", "MARITAL_STATUS",
+  "PREGNANCY", "DIABETES_PREV"
+)
+
+vars_numeric <- c(
+  "EXP_FACTOR", "LATITUDE", "LONGITUDE", "AGE",
+  "HEIGHT", "WEIGHT", "WAIST_CIRCUNF",
+  "AREA_KM2", "INT_TOPOL_BY_KM2", "INT_WALK_BY_KM2",
+  "DIST_STOPS_MIN", "DIST_STOPS_MAX", "DIST_STOPS_MEDIAN",
+  "DIST_STOPS_Q1", "DIST_STOPS_Q3", "DIST_STOPS_IQR",
+  "DIST_STOPS_MEAN", "DIST_STOPS_STDEV",
+  "NDVI_MEAN", "NDVI_MEDIAN", "NDVI_STDEV",
+  "NDVI_MIN", "NDVI_MAX", "NDVI_VAR",
+  "GREEN_PERC", "GREEN_AREA_M2",
+  "DENS_SUPERMARKET", "DENS_GREENGROCER",
+  "DENS_MARKETPLACE", "DENS_HEALTH_MARKET",
+  "DENS_FAST_TOTAL", "DENS_BAKERY_TOTAL",
+  "DENS_UNHEALTH_MARKET",
+  "SURVEY_LONG", "SURVEY_LAT", "GLUCOSE"
+)
+
+vars_integer <- c(
+  "INT_TOPOL_BY_BUFFER", "INT_WALK_BY_BUFFER",
+  "N_SUPERMARKET", "N_GREENGROCER", "N_CONVENIENCE",
+  "N_MARKETPLACE", "N_HEALTH_MARKET",
+  "N_FAST", "N_REST_FF", "N_FOODCOURT",
+  "N_FAST_TOTAL", "N_BAKERY", "N_PASTRY",
+  "N_CONFECTIONERY", "N_CAFE", "N_ICE",
+  "N_BAKERY_TOTAL", "N_UNHEALTH_MARKET",
+  "PEOPLE_AT_HOME"
+)
+
+# Función para especificar la clase de la variable en cada base de datos
+
+estandarizar_base <- function(df) {
+
+  df %>%
+    mutate(
+      across(any_of(vars_character), as.character),
+      across(any_of(vars_factor), ~ factor(.)),
+      across(any_of(vars_numeric), as.numeric),
+      across(any_of(vars_integer), ~ as.integer(round(.)))
+    )
+
+}
+
+# Aplicar la función en cada base
+
+bogota <- estandarizar_base(BOGOTA)
+medellin <- estandarizar_base(MEDELLIN)
+cali <- estandarizar_base(CALI)
+bucaramanga <- estandarizar_base(BUCARAMANGA)
+barranquilla <- estandarizar_base(BARRANQUILLA)
+
+
+bases <- list(
+  bogota = bogota,
+  medellin = medellin,
+  cali = cali,
+  bucaramanga = bucaramanga,
+  barranquilla = barranquilla
+)
+
+base_total <- bind_rows(
+  bogota,
+  medellin,
+  cali,
+  bucaramanga,
+  barranquilla
+)
+
+base_total <- base_total %>%
+  rename(WC = WAIST_CIRCUNF)
+
+base_total <- base_total %>%
+  mutate(
+    # 1) AGE_GROUP
+    AGE_GROUP = case_when(
+      AGE < 18 ~ 0,
+      AGE >= 18 & AGE <= 39 ~ 1,
+      AGE >= 40 & AGE <= 59 ~ 2,
+      AGE >= 60 & AGE <= 80 ~ 3,
+      TRUE ~ NA_real_
+    ),
+    AGE_GROUP = factor(
+      AGE_GROUP,
+      levels = c(0, 1, 2, 3),
+      labels = c("Menor de 18 años", "18-39 años", "40-59 años", "60-80 años")
+    ),
+
+    # 2) EDU_GROUP 
+    EDU_GROUP = case_when(
+      EDU_LEVEL %in% c(1, 2) ~ 1,       # Primaria o menos
+      EDU_LEVEL %in% c(3, 4) ~ 2,       # Secundaria o técnico
+      EDU_LEVEL %in% c(5, 6) ~ 3,       # Profesional o mayor
+      TRUE ~ NA_real_
+    ),
+    EDU_GROUP = factor(
+      EDU_GROUP,
+      levels = c(1, 2, 3),
+      labels = c("Primaria o menos", "Secundaria o técnico", "Profesional o mayor")
+    ),
+
+    # 3) SEL_GROUP (basado en SOC_ECON_LEVEL: 1-6)
+    SEL_GROUP = case_when(
+      SOC_ECON_LEVEL %in% c(1, 2) ~ 1,
+      SOC_ECON_LEVEL == 3 ~ 2,
+      SOC_ECON_LEVEL == 4 ~ 3,
+      SOC_ECON_LEVEL %in% c(5, 6) ~ 4,
+      TRUE ~ NA_real_
+    ),
+    SEL_GROUP = factor(
+      SEL_GROUP,
+      levels = c(1, 2, 3, 4),
+      labels = c("Estrato 1 y 2", "Estrato 3", "Estrato 4", "Estrato 5 y 6")
+    ),
+
+    # 4) BMI (kg / m^2) - HEIGHT en cm
+    BMI = WEIGHT / ( (HEIGHT / 100)^2 ),
+
+    # 5) BMI_CAT (solo adultos; <18 = NA)
+    BMI_CAT = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI < 18.5 ~ 1,
+      BMI >= 18.5 & BMI < 25 ~ 2,
+      BMI >= 25 & BMI < 30 ~ 3,
+      BMI >= 30 ~ 4,
+      TRUE ~ NA_real_
+    ),
+    BMI_CAT = factor(
+      BMI_CAT,
+      levels = c(1, 2, 3, 4),
+      labels = c("Bajo peso", "Normopeso", "Sobrepeso", "Obesidad")
+    ),
+
+    # 6) OVERWEIGHT (solo sobrepeso vs resto; adultos)
+    OVERWEIGHT = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 25 & BMI < 30 ~ 2,
+      !is.na(BMI) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OVERWEIGHT = factor(
+      OVERWEIGHT,
+      levels = c(1, 2),
+      labels = c("No sobrepeso", "Sobrepeso")
+    ),
+
+    # 7) OBESITY (adultos)
+    OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 30 ~ 2,
+      BMI < 30 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OBESITY = factor(
+      OBESITY,
+      levels = c(1, 2),
+      labels = c("No obesidad", "Obesidad")
+    ),
+
+    # 8) OVERW_OBESITY (adultos)
+    OVERW_OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      BMI >= 25 ~ 2,
+      BMI < 25 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    OVERW_OBESITY = factor(
+      OVERW_OBESITY,
+      levels = c(1, 2),
+      labels = c("No (IMC <25)", "Sí (IMC >=25)")
+    ),
+
+    # 9) ABDOM_OBESITY (adultos; umbrales que diste)
+    # SEX: 1=Masculino, 2=Femenino (según tu diccionario)
+    ABDOM_OBESITY = case_when(
+      AGE < 18 ~ NA_real_,
+      SEX == 2 & WC >= 90 ~ 2,  # Mujeres
+      SEX == 1 & WC >= 94 ~ 2,  # Hombres
+      !is.na(WC) & SEX %in% c(1,2) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    ABDOM_OBESITY = factor(
+      ABDOM_OBESITY,
+      levels = c(1, 2),
+      labels = c("No", "Sí")
+    ),
+
+    # 10) DIABETES_GLUCOSE (>=200 mg/dl)
+    DIABETES_GLUCOSE = case_when(
+      GLUCOSE < 200 ~ 1,
+      GLUCOSE >= 200 ~ 2,
+      TRUE ~ NA_real_
+    ),
+    DIABETES_GLUCOSE = factor(
+      DIABETES_GLUCOSE,
+      levels = c(1, 2),
+      labels = c("No", "Sí")
+    ),
+
+    # 11) DIABETES (antecedente o glucometría)
+    # DIABETES_PREV: 0=No, 1=Sí (según tu tabla)
+    DIABETES = case_when(
+      DIABETES_GLUCOSE == "Sí" | DIABETES_PREV %in% c(1, "1", "Sí", "Si") ~ 2,
+      DIABETES_GLUCOSE == "No" & DIABETES_PREV %in% c(0, "0", "No") ~ 1,
+      TRUE ~ NA_real_
+    ),
+    DIABETES = factor(
+      DIABETES,
+      levels = c(1, 2),
+      labels = c("No diabetes", "Diabetes")
+    ),
+    SEX = factor(
+      SEX,
+      levels = c(1, 2),
+      labels = c("Hombre", "Mujer")
+    ),
+    JOB_GROUP = case_when(
+      JOB == 1 ~ 1,
+      JOB == 2 ~ 2,
+      JOB == 3 ~ 2,
+      JOB == 4 ~ 3,
+      JOB == 5 ~ 4,
+      JOB == 6 ~ 5,
+      JOB == 7 ~ 6,
+      JOB == 8 ~ 7,
+      TRUE ~ NA_real_
+    ),
+    JOB_GROUP = factor(
+      JOB_GROUP,
+      levels = c(1,2,3,4,5,6,7),
+      labels = c("Empleado",
+                 "Independiente",
+                 "Pensionado",
+                 "Desempleado",
+                 "Estudiante",
+                 "Hogar",
+                 "Menor en casa")
+    ),
+    HOME_PEOPLE = case_when(
+      PEOPLE_AT_HOME == 1 ~ 1,
+      PEOPLE_AT_HOME == 2 ~ 2,
+      PEOPLE_AT_HOME == 3 ~ 3,
+      PEOPLE_AT_HOME >= 4 ~ 4,
+      TRUE ~ NA_real_
+      ),
+    HOME_PEOPLE = factor(
+      HOME_PEOPLE,
+      levels = c(1,2,3,4),
+      labels = c("Vive solo",
+                 "Vive con una persona",
+                 "Vive con dos personas",
+                 "Vive con tres o más personas")
+    )
+  )
+
+BASE_ESTUDIO <- base_total %>%
+  filter(
+    AGE >= 18,
+    !(SEX == 2 & PREGNANCY == "Sí")
+  )
+
+# Pesos 2 y 3 para PARA USAR PAQUETE WEMIX
+    
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR2 = 1)
+    
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR3 = 1)
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(EXP_FACTOR4 = 1)
+
+# CREAR ID UNICO PARA BUFFERS anidados a la ciudad
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BUF_ID_CITY = interaction(CITY_CODE, BUFFER_ID70, drop = TRUE)
+  )
+
+# CREAR ID UNICO PARA BARRIOS anidados a la ciudad
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BARRIO_ID_CITY = interaction(CITY_CODE, ID_SUBURB, drop = TRUE)
+  )
+
+# Crear variables del AFC agrupadas al buffer
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  group_by(BUF_ID_CITY) %>%
+  mutate(
+    # Ambiente caminable
+    INT_WALK_BY_KM2_L2 = mean(INT_WALK_BY_KM2, na.rm = TRUE),
+
+    # Transporte público (robusta)
+    DIST_STOPS_MEDIAN_L2 = median(DIST_STOPS_MEDIAN, na.rm = TRUE),
+
+    # Zonas verdes
+    GREEN_PERC_L2 = mean(GREEN_PERC, na.rm = TRUE),
+
+    # Ambiente alimentario
+    DENS_HEALTH_MARKET_L2 = mean(DENS_HEALTH_MARKET, na.rm = TRUE),
+    DENS_UNHEALTH_MARKET_L2 = mean(DENS_UNHEALTH_MARKET, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Incorporación de cambios en análisis descriptivo
+
+# Aplicar cambios
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    WEIGHT = ifelse(ID == 757742, 83.8, WEIGHT),
+    WEIGHT = ifelse(ID %in% c(328341, 557847, 806458), NA_real_, WEIGHT),
+    HEIGHT = ifelse(ID %in% c(328341, 557847, 806458, 348569), NA_real_, HEIGHT)
+  )
+
+# Recalcular BMI solo si hay WEIGHT y HEIGHT
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BMI = ifelse(is.na(WEIGHT) | is.na(HEIGHT),
+                 NA_real_,
+                 WEIGHT / ((HEIGHT/100)^2))
+  )
+
+# Excluir outliers de BMI >45 Y WC <56
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    BMI = ifelse(BMI > 45, NA_real_, BMI),
+    WC  = ifelse(WC  < 56, NA_real_, WC))
+
+# NA en BMI implausibles dado el WC
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+BMI = ifelse(ID %in% c(328341, 497225, 96778, 912698), NA_real_, BMI))
+
+
+# AGREGAR VARIABLE DE POBLACIÓN POR CIUDAD (DANE, proyeccion 2022)
+
+BASE_ESTUDIO <- BASE_ESTUDIO %>%
+  mutate(
+    POPULATION = case_when(
+      CITY_NAME == "BOGOTA"        ~ 7842853,
+      CITY_NAME == "MEDELLIN"      ~ 2530398,
+      CITY_NAME == "CALI"          ~ 2229598,
+      CITY_NAME == "BARRANQUILLA"  ~ 1309553,
+      CITY_NAME == "BUCARAMANGA"   ~ 600251,
+      TRUE                         ~ NA_real_
+    )
+  )
+  
+# Quitar NA para identificar outliers en modelo multinivel y que los codigos corran más rápido.
+  
+BASE_ESTUDIO_BMI <- BASE_ESTUDIO %>%
+  filter(!is.na(BMI))
+
+BASE_ESTUDIO_WC <- BASE_ESTUDIO %>%
+  filter(!is.na(WC))
+
+#--------------------------------------------------
+# Estandarización por ciudad (Z=0, DE=1)
+#--------------------------------------------------
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    INT_Z           = as.numeric(scale(INT_WALK_BY_KM2_L2)),
+    GREEN_Z         = as.numeric(scale(GREEN_PERC_L2)),
+    DENS_HEALTH_Z   = as.numeric(scale(DENS_HEALTH_MARKET_L2)),
+    DENS_UNHEALTH_Z = as.numeric(scale(DENS_UNHEALTH_MARKET_L2))
+  ) %>%
+  ungroup()
+
+#--------------------------------------------------
+# Distancia a paraderos: Sin paraderos + Q1–Q4
+#--------------------------------------------------
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI_Z %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    q_pos = ntile(
+      if_else(DIST_STOPS_MEDIAN_L2 > 0,
+              DIST_STOPS_MEDIAN_L2,
+              NA_real_),
+      4
+    ),
+    STOPS_CAT = case_when(
+      DIST_STOPS_MEDIAN_L2 == 0 ~ "Sin paraderos",
+      DIST_STOPS_MEDIAN_L2 > 0  ~ paste0("Q", q_pos)
+    ),
+    STOPS_CAT = factor(
+      STOPS_CAT,
+      levels = c("Sin paraderos", "Q1", "Q2", "Q3", "Q4")
+    )
+  ) %>%
+  ungroup() %>%
+  select(-q_pos)
+
+#--------------------------------------------------
+# Variable alternativa: ceros reasignados a Q4
+#--------------------------------------------------
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI_Z %>%
+  mutate(
+    STOPS_Q4 = fct_collapse(
+      STOPS_CAT,
+      Q4 = c("Q4", "Sin paraderos")
+    ),
+    STOPS_Q4 = factor(STOPS_Q4, levels = c("Q1","Q2","Q3","Q4"))
+  )
+
+#--------------------------------------------------
+# Estandarización por ciudad
+#--------------------------------------------------
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    INT_Z           = as.numeric(scale(INT_WALK_BY_KM2_L2)),
+    GREEN_Z         = as.numeric(scale(GREEN_PERC_L2)),
+    DENS_HEALTH_Z   = as.numeric(scale(DENS_HEALTH_MARKET_L2)),
+    DENS_UNHEALTH_Z = as.numeric(scale(DENS_UNHEALTH_MARKET_L2))
+  ) %>%
+  ungroup()
+
+#--------------------------------------------------
+# Distancia a paraderos
+#--------------------------------------------------
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    q_pos = ntile(
+      if_else(DIST_STOPS_MEDIAN_L2 > 0,
+              DIST_STOPS_MEDIAN_L2,
+              NA_real_),
+      4
+    ),
+    STOPS_CAT = case_when(
+      DIST_STOPS_MEDIAN_L2 == 0 ~ "Sin paraderos",
+      DIST_STOPS_MEDIAN_L2 > 0  ~ paste0("Q", q_pos)
+    ),
+    STOPS_CAT = factor(
+      STOPS_CAT,
+      levels = c("Sin paraderos", "Q1", "Q2", "Q3", "Q4")
+    )
+  ) %>%
+  ungroup() %>%
+  select(-q_pos)
+
+#--------------------------------------------------
+# Variable alternativa (ceros → Q4)
+#--------------------------------------------------
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(
+    STOPS_Q4 = fct_collapse(
+      STOPS_CAT,
+      Q4 = c("Q4", "Sin paraderos")
+    ),
+    STOPS_Q4 = factor(STOPS_Q4, levels = c("Q1","Q2","Q3","Q4"))
+  )
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI_Z %>%
+  mutate(STOPS_Q4_NUM = as.numeric(STOPS_Q4))  # Q1=1, Q2=2, Q3=3, Q4=4
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_BMI_Z %>%
+  mutate(STOPS_Q4_NUM = as.numeric(STOPS_Q4))  # Q1=1, Q2=2, Q3=3, Q4=4
+
+####### TERMINOS PILINOMICOS
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI_Z %>%
+  mutate(
+    GREEN_Z2 = GREEN_Z^2,
+    GREEN_Z3 = GREEN_Z^3,
+    INT_Z2   = INT_Z^2,
+    INT_Z3   = INT_Z^3
+  )  
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>% 
+  mutate(AGE_c = AGE - mean(AGE, na.rm = TRUE),
+                      AGE_c2 = AGE_c^2)
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(
+    GREEN_Z2 = GREEN_Z^2,
+    GREEN_Z3 = GREEN_Z^3,
+    INT_Z2   = INT_Z^2,
+    INT_Z3   = INT_Z^3
+  )  
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI_Z %>% 
+  mutate(AGE_c = AGE - mean(AGE, na.rm = TRUE),
+                      AGE_c2 = AGE_c^2)
+
+BASE_ESTUDIO_BMI_Z <- BASE_ESTUDIO_BMI_Z %>%
+  mutate(
+    DENS_HEALTH_LOG  = log1p(DENS_HEALTH_MARKET_L2),
+    DENS_UNHEALTH_LOG = log1p(DENS_UNHEALTH_MARKET_L2),
+
+    # Z global (sobre toda la muestra)
+    DENS_HEALTH_LOG_ZG  = as.numeric(scale(DENS_HEALTH_LOG)),
+    DENS_UNHEALTH_LOG_ZG = as.numeric(scale(DENS_UNHEALTH_LOG))
+  ) %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    # Z intra-ciudad (sobre log)
+    DENS_HEALTH_LOG_ZC  = as.numeric(scale(DENS_HEALTH_LOG)),
+    DENS_UNHEALTH_LOG_ZC = as.numeric(scale(DENS_UNHEALTH_LOG))
+  ) %>%
+  ungroup()
+
+
+# Transfomacion y estandarizacion de las variables
+
+BASE_ESTUDIO_WC_Z <- BASE_ESTUDIO_WC_Z %>%
+  mutate(
+    DENS_HEALTH_LOG  = log1p(DENS_HEALTH_MARKET_L2),
+    DENS_UNHEALTH_LOG = log1p(DENS_UNHEALTH_MARKET_L2),
+
+    # Z global (sobre toda la muestra)
+    DENS_HEALTH_LOG_ZG  = as.numeric(scale(DENS_HEALTH_LOG)),
+    DENS_UNHEALTH_LOG_ZG = as.numeric(scale(DENS_UNHEALTH_LOG))
+  ) %>%
+  group_by(CITY_NAME) %>%
+  mutate(
+    # Z intra-ciudad (sobre log)
+    DENS_HEALTH_LOG_ZC  = as.numeric(scale(DENS_HEALTH_LOG)),
+    DENS_UNHEALTH_LOG_ZC = as.numeric(scale(DENS_UNHEALTH_LOG))
+  ) %>%
+  ungroup()
+
+
+### MODELO 1 FINAL
+
+MOD1F <- mix(
+  BMI ~ AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
+    INT_Z*SEX +
+    INT_Z*EDU_GROUP +
+    STOPS_Q4_NUM +
+    (GREEN_Z + GREEN_Z2 + GREEN_Z3)*EDU_GROUP +
+    (1 | BUF_ID_CITY) +
+    (1 + INT_Z + GREEN_Z + STOPS_Q4_NUM | CITY_NAME),
+  data = BASE_ESTUDIO_BMI_Z,
+  weights = c("EXP_FACTOR","EXP_FACTOR2","EXP_FACTOR3")
+)
+
+### MODELO 2 FINAL
+
+MOD2F <- mix(WC ~
+                    AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP + 
+                    STOPS_Q4_NUM +
+                    INT_Z*EDU_GROUP + + 
+                    GREEN_Z*EDU_GROUP +
+                    (1 | BUF_ID_CITY) + 
+                    (1 + INT_Z + STOPS_Q4_NUM + GREEN_Z | CITY_NAME),
+  data = BASE_ESTUDIO_WC_Z,
+  weights = c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
+)
+
+### MODELO 3 FINAL
+
+MOD3F <- mix(BMI ~
+                  AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP + 
+                  DENS_HEALTH_LOG_ZC*SEX + 
+                  DENS_HEALTH_LOG_ZC*EDU_GROUP +
+                  DENS_UNHEALTH_LOG_ZC*EDU_GROUP +
+                  (1 | BUF_ID_CITY) + 
+                  (1 + DENS_HEALTH_LOG_ZC + DENS_UNHEALTH_LOG_ZC | CITY_NAME),
+  data = BASE_ESTUDIO_BMI_Z,
+  weights = c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
+)
+
+### MODELO 4 FINAL
+
+MOD4F <- mix(WC ~
+                  AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP + 
+                  DENS_HEALTH_LOG_ZC*EDU_GROUP +
+                  DENS_UNHEALTH_LOG_ZC*EDU_GROUP +
+                  (1 | BUF_ID_CITY) + 
+                  (1 + DENS_HEALTH_LOG_ZC + DENS_UNHEALTH_LOG_ZC | CITY_NAME),
+  data = BASE_ESTUDIO_WC_Z,
+  weights = c("EXP_FACTOR", "EXP_FACTOR2", "EXP_FACTOR3")
+)
+```
+
+
+
+```{r}
+library(WeMix)
+library(tidyverse)
+
+# ============================================================
+# FUNCIÓN PRINCIPAL
+# ============================================================
+# Argumentos:
+#   modelo_fit   : objeto mix() ya ajustado
+#   datos        : dataframe usado en el modelo
+#   formula_sim  : fórmula del modelo SIMPLIFICADO (sin random slopes ciudad)
+#   id_buf       : nombre de la columna de buffer (character)
+#   vars_interes : vector de nombres de variables AFC a evaluar
+#   pesos        : vector de nombres de los 3 pesos (igual que en mix())
+#   B            : número de simulaciones
+#   alpha        : nivel de significancia
+# ============================================================
+
+
+
+poder_mc_buffers <- function(modelo_fit,
+                              datos,
+                              formula_sim,
+                              id_buf       = "BUF_ID_CITY",
+                              vars_interes,
+                              pesos        = c("EXP_FACTOR","EXP_FACTOR2"),
+                              B            = 1000,
+                              alpha        = 0.05,
+                              seed         = 2024) {
+  set.seed(seed)
+  
+  # 1. Extraer parámetros del modelo ajustado
+  betas      <- coef(modelo_fit)
+  nombre_buf <- paste0(id_buf, ".(Intercept)")
+  sigma2_buf <- modelo_fit$vars[nombre_buf]
+  sigma2_e   <- modelo_fit$vars["Residual"]
+  
+  cat("Sigma² buffer:", round(sigma2_buf, 4), "\n")
+  cat("Sigma² residual:", round(sigma2_e, 4), "\n")
+  
+  # 2. Construir matriz de diseño X (efectos fijos solamente)
+  formula_fija <- lme4::nobars(formula(modelo_fit))
+  X <- model.matrix(formula_fija, data = datos)
+  
+  if (length(betas) != ncol(X)) {
+    stop("Dimensiones de X y betas no coinciden.")
+  }
+  
+  # 3. Índices de buffers — CONVERTIR A CHARACTER para evitar problema de factor
+  buf_ids      <- as.character(datos[[id_buf]])
+  buffers_uniq <- unique(buf_ids)
+  n_buf        <- length(buffers_uniq)
+  
+  cat("Número de buffers:", n_buf, "\n")
+  cat("Número de individuos:", nrow(datos), "\n")
+  
+  # 4. Predictor lineal fijo
+  mu_fijo <- as.vector(X %*% betas)
+  
+  # 5. Matriz de resultados
+  pvals_mat <- matrix(NA, nrow = B, ncol = length(vars_interes))
+  colnames(pvals_mat) <- vars_interes
+  n_errores <- 0
+  
+  for (b in 1:B) {
+    
+    # Simular efectos aleatorios de buffer
+    u_buf        <- rnorm(n_buf, mean = 0, sd = sqrt(sigma2_buf))
+    names(u_buf) <- buffers_uniq
+    
+    # Simular residuales
+    eps <- rnorm(nrow(datos), mean = 0, sd = sqrt(sigma2_e))
+    
+    # Generar desenlace simulado
+    datos$y_sim <- mu_fijo + u_buf[buf_ids] + eps
+    
+    tryCatch({
+      
+      mod_sim <- mix(
+        formula = formula_sim,
+        data    = datos,
+        weights = pesos
+      )
+      
+      # Extraer tabla de coeficientes y calcular p-valores
+      tab <- summary(mod_sim)$coef
+      gl  <- mod_sim$ngroups[2] - 1   # buffers - 1
+      pv  <- 2 * pt(abs(tab[, "t value"]), df = gl, lower.tail = FALSE)
+      
+      # Guardar p-valores para variables de interés
+      for (v in vars_interes) {
+        if (v %in% names(pv)) {
+          pvals_mat[b, v] <- pv[v]
+        }
+      }
+      
+    }, error = function(e) {
+      n_errores <<- n_errores + 1
+    })
+    
+    if (b %% 100 == 0) cat("  Iteración", b, "/", B, "\n")
+  }
+  
+  cat("Errores de convergencia:", n_errores, "/", B, "\n")
+  
+  # 6. Calcular poder
+  poder    <- colMeans(pvals_mat < alpha, na.rm = TRUE)
+  n_validas <- colSums(!is.na(pvals_mat))
+  
+  resultado <- data.frame(
+    variable  = vars_interes,
+    poder     = round(poder, 3),
+    poder_pct = paste0(round(poder * 100, 1), "%"),
+    n_sim_ok  = n_validas,
+    row.names = NULL
+  )
+  
+  return(list(
+    tabla       = resultado,
+    pvals_bruto = pvals_mat,
+    params      = list(sigma2_buf = sigma2_buf,
+                       sigma2_e   = sigma2_e,
+                       n_buf      = n_buf,
+                       gl         = n_buf - 1,
+                       B          = B)
+  ))
+}
+
+```
+
+```{r}
+# Definir fórmulas para los 4 modelos
+formula_sim_M1 <- y_sim ~ AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
+                           INT_Z*SEX + INT_Z*EDU_GROUP +
+                           STOPS_Q4_NUM +
+                           GREEN_Z*EDU_GROUP +
+                           GREEN_Z2*EDU_GROUP +
+                           GREEN_Z3*EDU_GROUP +
+                           (1 | BUF_ID_CITY)
+
+formula_sim_M2 <- y_sim ~ AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
+                           STOPS_Q4_NUM +
+                           INT_Z*EDU_GROUP +
+                           GREEN_Z*EDU_GROUP +
+                           (1 | BUF_ID_CITY)
+
+formula_sim_M3 <- y_sim ~ AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
+                           DENS_HEALTH_LOG_ZC*SEX +
+                           DENS_HEALTH_LOG_ZC*EDU_GROUP +
+                           DENS_UNHEALTH_LOG_ZC*EDU_GROUP +
+                           (1 | BUF_ID_CITY)
+
+formula_sim_M4 <- y_sim ~ AGE_c + AGE_c2 + SEX + EDU_GROUP + SEL_GROUP +
+                           DENS_HEALTH_LOG_ZC*EDU_GROUP +
+                           DENS_UNHEALTH_LOG_ZC*EDU_GROUP +
+                           (1 | BUF_ID_CITY)
+
+# ============================================================
+# CORRER LOS 4 MODELOS SECUENCIALMENTE
+# ============================================================
+
+cat("=== MODELO 1: BMI ~ Actividad física ===\n")
+t1 <- proc.time()
+res_M1 <- poder_mc_buffers(
+  modelo_fit   = MOD1F,
+  datos        = BASE_ESTUDIO_BMI_Z,
+  formula_sim  = formula_sim_M1,
+  id_buf       = "BUF_ID_CITY",
+  vars_interes = vars_M1,
+  pesos        = c("EXP_FACTOR","EXP_FACTOR2"),
+  B            = 1000
+)
+cat("Tiempo M1:", round((proc.time()-t1)[3]/60, 1), "min\n")
+saveRDS(res_M1, "poder_M1.rds")   # guardar por si se interrumpe
+
+cat("\n=== MODELO 2: WC ~ Actividad física ===\n")
+t2 <- proc.time()
+res_M2 <- poder_mc_buffers(
+  modelo_fit   = MOD2F,
+  datos        = BASE_ESTUDIO_WC_Z,
+  formula_sim  = formula_sim_M2,
+  id_buf       = "BUF_ID_CITY",
+  vars_interes = vars_M2,
+  pesos        = c("EXP_FACTOR","EXP_FACTOR2"),
+  B            = 1000
+)
+cat("Tiempo M2:", round((proc.time()-t2)[3]/60, 1), "min\n")
+saveRDS(res_M2, "poder_M2.rds")
+
+cat("\n=== MODELO 3: BMI ~ Alimentación ===\n")
+t3 <- proc.time()
+res_M3 <- poder_mc_buffers(
+  modelo_fit   = MOD3F,
+  datos        = BASE_ESTUDIO_BMI_Z,
+  formula_sim  = formula_sim_M3,
+  id_buf       = "BUF_ID_CITY",
+  vars_interes = vars_M3,
+  pesos        = c("EXP_FACTOR","EXP_FACTOR2"),
+  B            = 1000
+)
+cat("Tiempo M3:", round((proc.time()-t3)[3]/60, 1), "min\n")
+saveRDS(res_M3, "poder_M3.rds")
+
+cat("\n=== MODELO 4: WC ~ Alimentación ===\n")
+t4 <- proc.time()
+res_M4 <- poder_mc_buffers(
+  modelo_fit   = MOD4F,
+  datos        = BASE_ESTUDIO_WC_Z,
+  formula_sim  = formula_sim_M4,
+  id_buf       = "BUF_ID_CITY",
+  vars_interes = vars_M4,
+  pesos        = c("EXP_FACTOR","EXP_FACTOR2"),
+  B            = 1000
+)
+cat("Tiempo M4:", round((proc.time()-t4)[3]/60, 1), "min\n")
+saveRDS(res_M4, "poder_M4.rds")
+
+# ============================================================
+# TABLA CONSOLIDADA FINAL
+# ============================================================
+tabla_final <- bind_rows(
+  res_M1$tabla %>% mutate(modelo = "M1: BMI ~ AF",   desenlace = "IMC"),
+  res_M2$tabla %>% mutate(modelo = "M2: WC ~ AF",    desenlace = "PA"),
+  res_M3$tabla %>% mutate(modelo = "M3: BMI ~ Alim", desenlace = "IMC"),
+  res_M4$tabla %>% mutate(modelo = "M4: WC ~ Alim",  desenlace = "PA")
+) %>%
+  select(desenlace, modelo, variable, poder_pct, n_sim_ok)
+
+print(tabla_final)
+```
+
+
+```{r}
+# Tabla final con interpretación para la tesis
+library(tidyverse)
+
+tabla_poder_final <- bind_rows(
+  res_M1$tabla %>% mutate(modelo = "M1: IMC ~ Actividad física"),
+  res_M2$tabla %>% mutate(modelo = "M2: PA ~ Actividad física"),
+  res_M3$tabla %>% mutate(modelo = "M3: IMC ~ Alimentación"),
+  res_M4$tabla %>% mutate(modelo = "M4: PA ~ Alimentación")
+) %>%
+  mutate(
+    interpretacion = case_when(
+      poder >= 0.80 ~ "Adecuado (≥80%)",
+      poder >= 0.50 ~ "Moderado (50-79%)",
+      poder >= 0.20 ~ "Bajo (20-49%)",
+      TRUE          ~ "Muy bajo (<20%)"
+    )
+  ) %>%
+  select(modelo, variable, poder_pct, interpretacion, n_sim_ok)
+
+print(tabla_poder_final)
+```
+
