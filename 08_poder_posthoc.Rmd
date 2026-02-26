@@ -1,7 +1,7 @@
 ---
 title: "Poder"
 author: "Sebastian A Gutierrez-Romero"
-date: "2026-02-14"
+date: "2026-02-05"
 output: html_document
 ---
 
@@ -868,7 +868,7 @@ print(tabla_final)
 
 
 ```{r}
-# Tabla final con interpretación para la tesis
+# Tabla final 
 library(tidyverse)
 
 tabla_poder_final <- bind_rows(
@@ -889,4 +889,5 @@ tabla_poder_final <- bind_rows(
 
 print(tabla_poder_final)
 ```
+
 
